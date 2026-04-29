@@ -1,0 +1,19 @@
+# Build output
+build/
+dist/
+
+# Environment
+.env
+__pycache__/
+*.pyc
+
+# System
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Agent
+.agent/

@@ -1,0 +1,566 @@
+import os, re, json, threading, time, tkinter as tk, urllib.request, webbrowser, shutil
+from tkinter import messagebox, filedialog
+import customtkinter as ctk
+import yt_dlp
+from PIL import Image
+
+HAS_FFMPEG = shutil.which('ffmpeg') is not None
+
+DOWNLOAD_PATH = os.path.join(os.path.expanduser('~'), 'Downloads', 'VideoDownloader')
+HISTORY_FILE = os.path.join(DOWNLOAD_PATH, 'download_history.json')
+CONFIG_FILE = os.path.join(os.path.expanduser('~'), 'Downloads', 'VideoDownloader', 'config.json')
+if not os.path.exists(DOWNLOAD_PATH): os.makedirs(DOWNLOAD_PATH)
+
+def load_config():
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except: pass
+    return {}
+
+def save_config(data):
+    try:
+        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except: pass
+
+PLATFORMS = "YouTube • TikTok • Facebook • Instagram • Twitter/X • Reddit • Vimeo • Dailymotion • Bilibili • Twitch • SoundCloud • 1000+ sites"
+
+def load_history():
+    try:
+        if os.path.exists(HISTORY_FILE):
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f: return json.load(f)
+    except: pass
+    return []
+
+def save_history(data):
+    try:
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f: json.dump(data[-500:], f, ensure_ascii=False, indent=2)
+    except: pass
+
+# Format khi có ffmpeg: tải riêng video+audio rồi merge → chất lượng cao nhất
+_FMT_FFMPEG = {
+    "Tốt Nhất (Best)": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best",
+    "4K (2160p)":       "bestvideo[height<=2160][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=2160]+bestaudio/best",
+    "2K (1440p)":       "bestvideo[height<=1440][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1440]+bestaudio/best",
+    "1080p":            "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best",
+    "720p":             "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best",
+    "480p":             "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best",
+    "Chỉ Lấy Nhạc (MP3)": "bestaudio/best",
+}
+# Format khi KHÔNG có ffmpeg: chỉ dùng file đã pre-merged (mp4 gộp sẵn)
+_FMT_NOFFMPEG = {
+    "Tốt Nhất (Best)": "best[ext=mp4]/best[ext=webm]/best",
+    "4K (2160p)":       "best[height<=2160][ext=mp4]/best[height<=2160]",
+    "2K (1440p)":       "best[height<=1440][ext=mp4]/best[height<=1440]",
+    "1080p":            "best[height<=1080][ext=mp4]/best[height<=1080]",
+    "720p":             "best[height<=720][ext=mp4]/best[height<=720]",
+    "480p":             "best[height<=480][ext=mp4]/best[height<=480]",
+    "Chỉ Lấy Nhạc (MP3)": "bestaudio/best",
+}
+FORMAT_MAP = _FMT_FFMPEG if HAS_FFMPEG else _FMT_NOFFMPEG
+
+def clean_filename(raw, fallback_id="x"):
+    if not raw or len(raw) < 3: raw = f"video_{fallback_id}"
+    if len(raw) > 150: raw = raw[:150]
+    c = re.sub(r'[\\/*?:"<>|]', " ", raw)
+    return " ".join(c.split()).strip() or f"video_{fallback_id}"
+
+class VideoDownloaderApp(ctk.CTk):
+    FONT = "Georgia"
+    def __init__(self):
+        super().__init__()
+        self.title("⚡ Pro Video Downloader — by Hoàng Đức")
+        self.geometry("540x800")
+        self.resizable(False, False)
+        # Set window icon for titlebar + taskbar
+        try:
+            icon_path = os.path.join(os.path.dirname(__file__), "icon.ico")
+            if os.path.exists(icon_path):
+                self.iconbitmap(icon_path)
+        except: pass
+        ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("blue")
+        cfg = load_config()
+        saved_path = cfg.get('download_path', DOWNLOAD_PATH)
+        self.download_path = saved_path if os.path.isdir(saved_path) else DOWNLOAD_PATH
+        self.history = load_history()
+        self._last_hook_time = 0
+        self._donate_imgs = None
+        self._qr_visible = False
+        self.setup_ui()
+
+    def setup_ui(self):
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+        self.tabview = ctk.CTkTabview(self, corner_radius=15)
+        self.tabview.grid(row=0, column=0, padx=16, pady=(16, 8), sticky="nsew")
+        self.tabview.add("▶ Tải Video")
+        self.tabview.add("⏬ Hàng Loạt")
+        self.tabview.add("📡 Quét Kênh")
+        self.tabview.add("🖼 Thumbnail")
+        self.tabview.add("🕓 Lịch Sử")
+        self.tabview._segmented_button.configure(
+            font=ctk.CTkFont(family=self.FONT, size=12, weight="bold"))
+
+        # === TAB 1: SINGLE ===
+        t1 = self.tabview.tab("▶ Tải Video")
+        t1.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(t1, text=f"🌐 {PLATFORMS}", font=ctk.CTkFont(family=self.FONT, size=10),
+            text_color="#888", wraplength=460).pack(pady=(12, 4))
+        ctk.CTkLabel(t1, text="Dán link video từ bất kỳ nền tảng nào",
+            font=ctk.CTkFont(family=self.FONT, size=15, weight="bold")).pack(pady=(2, 12))
+        uf = ctk.CTkFrame(t1, fg_color="transparent"); uf.pack(pady=(0, 10), fill="x", padx=12)
+        self.single_url = ctk.CTkEntry(uf, placeholder_text="https://...", height=46,
+            font=ctk.CTkFont(family=self.FONT, size=13))
+        self.single_url.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ctk.CTkButton(uf, text="📋", width=46, height=46, command=lambda: self._paste_to(self.single_url),
+            font=ctk.CTkFont(size=18), fg_color="#636e72", hover_color="#2d3436").pack(side="right")
+        qf = ctk.CTkFrame(t1, fg_color="transparent"); qf.pack(pady=(0, 14))
+        ctk.CTkLabel(qf, text="Chất lượng:", font=ctk.CTkFont(family=self.FONT, size=13)).pack(side="left", padx=(0, 10))
+        self.q_menu = ctk.CTkOptionMenu(qf, width=210, values=list(FORMAT_MAP.keys()))
+        self.q_menu.pack(side="left")
+        self.btn_single = ctk.CTkButton(t1, text="▶  BẮT ĐẦU TẢI", command=self.on_single, width=230, height=50,
+            font=ctk.CTkFont(family=self.FONT, size=15, weight="bold"), fg_color="#00b894", hover_color="#00a381")
+        self.btn_single.pack(pady=(0, 10))
+
+        # === TAB 2: BULK ===
+        t2 = self.tabview.tab("⏬ Hàng Loạt")
+        t2.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(t2, text="Dán danh sách link (mỗi dòng 1 link)",
+            font=ctk.CTkFont(family=self.FONT, size=15, weight="bold")).pack(pady=(14, 8))
+        self.bulk_text = ctk.CTkTextbox(t2, width=480, height=160,
+            font=ctk.CTkFont(family=self.FONT, size=12)); self.bulk_text.pack(pady=(0, 10), padx=12)
+        self.q_bulk = ctk.CTkOptionMenu(t2, width=210, values=list(FORMAT_MAP.keys()))
+        self.q_bulk.pack(pady=(0, 12))
+        self.btn_bulk = ctk.CTkButton(t2, text="⏬  TẢI TẤT CẢ", command=self.on_bulk, width=230, height=50,
+            font=ctk.CTkFont(family=self.FONT, size=15, weight="bold"), fg_color="#00b894", hover_color="#00a381")
+        self.btn_bulk.pack(pady=(0, 10))
+
+        # === TAB 3: CHANNEL SCAN ===
+        t3 = self.tabview.tab("📡 Quét Kênh")
+        t3.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(t3, text="Quét & Tải toàn bộ video của Kênh",
+            font=ctk.CTkFont(family=self.FONT, size=15, weight="bold")).pack(pady=(14, 4))
+        ctk.CTkLabel(t3, text="Dán URL kênh YouTube, TikTok profile, hoặc playlist.\nApp sẽ tự quét tất cả video và tải về.",
+            font=ctk.CTkFont(family=self.FONT, size=12), text_color="#aaa").pack(pady=(0, 10))
+        self.chan_url = ctk.CTkEntry(t3, placeholder_text="https://youtube.com/@ChannelName hoặc playlist URL",
+            width=480, height=46, font=ctk.CTkFont(family=self.FONT, size=13))
+        self.chan_url.pack(pady=(0, 8), padx=12)
+        self.q_chan = ctk.CTkOptionMenu(t3, width=210, values=list(FORMAT_MAP.keys()))
+        self.q_chan.pack(pady=(0, 8))
+        cf = ctk.CTkFrame(t3, fg_color="transparent"); cf.pack(pady=(0, 10))
+        ctk.CTkLabel(cf, text="Giới hạn:", font=ctk.CTkFont(family=self.FONT, size=13)).pack(side="left", padx=(0, 8))
+        self.chan_limit = ctk.CTkOptionMenu(cf, width=150, values=["Tất cả", "10 video", "20 video", "50 video", "100 video"])
+        self.chan_limit.pack(side="left")
+        bf = ctk.CTkFrame(t3, fg_color="transparent"); bf.pack(pady=(0, 8))
+        self.btn_scan = ctk.CTkButton(bf, text="🔍 QUÉT KÊNH", command=self.on_scan, width=155, height=44,
+            font=ctk.CTkFont(family=self.FONT, size=13, weight="bold"), fg_color="#6c5ce7", hover_color="#5a4bd1")
+        self.btn_scan.pack(side="left", padx=6)
+        self.btn_chan_dl = ctk.CTkButton(bf, text="⏬ TẢI TẤT CẢ", command=self.on_chan_download, width=155, height=44,
+            font=ctk.CTkFont(family=self.FONT, size=13, weight="bold"), fg_color="#00b894", hover_color="#00a381", state="disabled")
+        self.btn_chan_dl.pack(side="left", padx=6)
+        self.chan_info = ctk.CTkLabel(t3, text="", font=ctk.CTkFont(family=self.FONT, size=11), text_color="#8cf", wraplength=460)
+        self.chan_info.pack(pady=(4, 4))
+        self.chan_list = ctk.CTkTextbox(t3, width=480, height=110, state="disabled",
+            font=ctk.CTkFont(family=self.FONT, size=11))
+        self.chan_list.pack(pady=(0, 6), padx=12)
+        self._chan_videos = []
+
+        # === TAB 4: THUMBNAIL ===
+        t4 = self.tabview.tab("🖼 Thumbnail")
+        t4.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(t4, text="Tải Thumbnail chất lượng cao",
+            font=ctk.CTkFont(family=self.FONT, size=15, weight="bold")).pack(pady=(16, 10))
+        self.thumb_url = ctk.CTkEntry(t4, placeholder_text="https://youtube.com/watch?v=...",
+            width=480, height=46, font=ctk.CTkFont(family=self.FONT, size=13))
+        self.thumb_url.pack(pady=(0, 10), padx=12)
+        self.btn_thumb = ctk.CTkButton(t4, text="🖼  TẢI THUMBNAIL", command=self.on_thumb, width=230, height=50,
+            font=ctk.CTkFont(family=self.FONT, size=15, weight="bold"), fg_color="#6c5ce7", hover_color="#5a4bd1")
+        self.btn_thumb.pack(pady=(0, 6))
+        self.thumb_info = ctk.CTkLabel(t4, text="", font=ctk.CTkFont(family=self.FONT, size=11),
+            text_color="#8cf", wraplength=460)
+        self.thumb_info.pack(pady=(0, 6))
+        ctk.CTkLabel(t4, text="─── Tải hàng loạt thumbnail ───",
+            text_color="#555", font=ctk.CTkFont(family=self.FONT, size=11)).pack(pady=(8, 8))
+        self.thumb_bulk = ctk.CTkTextbox(t4, width=480, height=90,
+            font=ctk.CTkFont(family=self.FONT, size=12)); self.thumb_bulk.pack(pady=(0, 10), padx=12)
+        self.btn_thumb_bulk = ctk.CTkButton(t4, text="🖼  TẢI TẤT CẢ THUMBNAIL", command=self.on_thumb_bulk,
+            width=230, height=42, font=ctk.CTkFont(family=self.FONT, size=13, weight="bold"),
+            fg_color="#6c5ce7", hover_color="#5a4bd1")
+        self.btn_thumb_bulk.pack(pady=(0, 8))
+
+        # === TAB 5: HISTORY ===
+        t5 = self.tabview.tab("🕓 Lịch Sử")
+        t5.grid_columnconfigure(0, weight=1)
+        hh = ctk.CTkFrame(t5, fg_color="transparent"); hh.pack(fill="x", pady=(12, 8), padx=12)
+        self.hist_count = ctk.CTkLabel(hh, text=f"📊 Đã tải: {len(self.history)} video",
+            font=ctk.CTkFont(family=self.FONT, size=14, weight="bold"))
+        self.hist_count.pack(side="left")
+        ctk.CTkButton(hh, text="🗑 Xóa", width=76, height=32, fg_color="#e74c3c", hover_color="#c0392b",
+            font=ctk.CTkFont(family=self.FONT, size=12), command=self.clear_history).pack(side="right")
+        self.hist_text = ctk.CTkTextbox(t5, width=480, height=310, state="disabled",
+            font=ctk.CTkFont(family=self.FONT, size=12))
+        self.hist_text.pack(pady=(0, 8), padx=12)
+        self._refresh_hist()
+
+        # === STATUS BAR ===
+        sf = ctk.CTkFrame(self, fg_color="transparent")
+        sf.grid(row=1, column=0, padx=16, pady=(0, 6), sticky="ew"); sf.grid_columnconfigure(0, weight=1)
+        self.pbar = ctk.CTkProgressBar(sf, width=490); self.pbar.set(0)
+        self.pbar.grid(row=0, column=0, pady=(6, 2)); self.pbar.grid_remove()
+        self.status = ctk.CTkLabel(sf, text="Sẵn sàng", font=ctk.CTkFont(family=self.FONT, size=13))
+        self.status.grid(row=1, column=0, pady=(2, 6))
+        fbf = ctk.CTkFrame(sf, fg_color="transparent"); fbf.grid(row=2, column=0, pady=(0, 4))
+        ctk.CTkButton(fbf, text="📂  MỞ THƯ MỤC", command=lambda: os.startfile(self.download_path),
+            fg_color="#2ecc71", hover_color="#27ae60", width=196, height=38,
+            font=ctk.CTkFont(family=self.FONT, size=13, weight="bold")).pack(side="left", padx=(0, 10))
+        ctk.CTkButton(fbf, text="📁  ĐỔI THƯ MỤC", command=self._pick_folder,
+            fg_color="#636e72", hover_color="#2d3436", width=196, height=38,
+            font=ctk.CTkFont(family=self.FONT, size=13, weight="bold")).pack(side="left")
+        self.path_label = ctk.CTkLabel(sf, text=f"📍 {self.download_path}",
+            font=ctk.CTkFont(family=self.FONT, size=10), text_color="#777", wraplength=490)
+        self.path_label.grid(row=3, column=0, pady=(0, 4))
+
+        # === COFFEE FOOTER with hover QR ===
+        self._build_coffee_footer()
+
+    # ===== FOLDER PICKER =====
+    def _pick_folder(self):
+        chosen = filedialog.askdirectory(title="Chọn thư mục lưu video", initialdir=self.download_path)
+        if chosen:
+            self.download_path = os.path.normpath(chosen)
+            if not os.path.exists(self.download_path):
+                os.makedirs(self.download_path)
+            self.path_label.configure(text=f"📍 {self.download_path}")
+            save_config({'download_path': self.download_path})
+
+    # ===== HISTORY =====
+    def _refresh_hist(self):
+        self.hist_text.configure(state="normal"); self.hist_text.delete("1.0", "end")
+        if not self.history:
+            self.hist_text.insert("1.0", "Chưa có video nào. Hãy tải video đầu tiên! 🎬")
+        else:
+            lines = []
+            for i, h in enumerate(reversed(self.history[-100:]), 1):
+                lines.append(f"{i}. {h.get('title','N/A')}\n   🔗 {h.get('url','')[:60]}...\n   📅 {h.get('time','')}  •  📁 {h.get('type','video')}")
+            self.hist_text.insert("1.0", "\n\n".join(lines))
+        self.hist_text.configure(state="disabled")
+        self.hist_count.configure(text=f"📊 Đã tải: {len(self.history)} video")
+
+    def clear_history(self):
+        if messagebox.askyesno("Xác nhận", "Xóa toàn bộ lịch sử?"):
+            self.history = []; save_history([]); self._refresh_hist()
+
+    # ===== CHANNEL SCAN =====
+    def on_scan(self):
+        url = self.chan_url.get().strip()
+        if not url: messagebox.showerror("Lỗi", "Nhập URL kênh!"); return
+        self.btn_scan.configure(state="disabled"); self.chan_info.configure(text="🔍 Đang quét kênh...")
+        self.chan_list.configure(state="normal"); self.chan_list.delete("1.0", "end"); self.chan_list.configure(state="disabled")
+        threading.Thread(target=self._scan_worker, args=(url,), daemon=True).start()
+
+    def _get_limit(self):
+        v = self.chan_limit.get()
+        if v == "Tất cả": return None
+        return int(v.split()[0])
+
+    def _scan_worker(self, url):
+        try:
+            limit = self._get_limit()
+            opts = {'quiet': True, 'no_warnings': True, 'extract_flat': True, 'skip_download': True}
+            if limit: opts['playlistend'] = limit
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+            entries = info.get('entries', [])
+            if not entries and info.get('id'):
+                entries = [info]
+            self._chan_videos = []
+            for e in entries:
+                if e:
+                    self._chan_videos.append({'url': e.get('url') or e.get('webpage_url', ''), 'title': e.get('title', 'N/A')})
+            n = len(self._chan_videos)
+            channel = info.get('channel', '') or info.get('uploader', '') or info.get('title', 'Kênh')
+            self.after(0, lambda: self.chan_info.configure(text=f"✅ Tìm thấy {n} video trong kênh: {channel}"))
+            self.after(0, lambda: self.btn_scan.configure(state="normal"))
+            self.after(0, lambda: self.btn_chan_dl.configure(state="normal"))
+            # Show list
+            lines = [f"{i+1}. {v['title']}" for i, v in enumerate(self._chan_videos[:100])]
+            txt = "\n".join(lines)
+            if n > 100: txt += f"\n... và {n-100} video khác"
+            self.after(0, lambda: (self.chan_list.configure(state="normal"), self.chan_list.delete("1.0","end"), self.chan_list.insert("1.0", txt), self.chan_list.configure(state="disabled")))
+        except Exception as e:
+            self.after(0, lambda: self.chan_info.configure(text=f"❌ Lỗi: {str(e)[:80]}"))
+            self.after(0, lambda: self.btn_scan.configure(state="normal"))
+
+    def on_chan_download(self):
+        if not self._chan_videos: messagebox.showerror("Lỗi", "Quét kênh trước!"); return
+        urls = [v['url'] for v in self._chan_videos if v['url']]
+        q = self.q_chan.get()
+        self.btn_chan_dl.configure(state="disabled")
+        threading.Thread(target=self._download_engine, args=(urls, q, True), daemon=True).start()
+
+    # ===== DOWNLOADS =====
+    def on_single(self):
+        url = self.single_url.get().strip()
+        if not url: messagebox.showerror("Lỗi", "Nhập link!"); return
+        self.btn_single.configure(state="disabled")
+        threading.Thread(target=self._download_engine, args=([url], self.q_menu.get()), daemon=True).start()
+
+    def on_bulk(self):
+        txt = self.bulk_text.get("1.0", "end").strip()
+        if not txt: messagebox.showerror("Lỗi", "Dán link!"); return
+        urls = [u.strip() for u in txt.split('\n') if u.strip()]
+        self.btn_bulk.configure(state="disabled")
+        threading.Thread(target=self._download_engine, args=(urls, self.q_bulk.get()), daemon=True).start()
+
+    def _paste_to(self, entry):
+        """Quick-paste clipboard content into an entry field."""
+        try:
+            clip = self.clipboard_get()
+            if clip:
+                entry.delete(0, "end")
+                entry.insert(0, clip.strip())
+        except: pass
+
+    def _download_engine(self, urls, quality, is_channel=False):
+        total = len(urls); ok = 0; failures = []
+        fmt = FORMAT_MAP.get(quality, "bestvideo+bestaudio/best")
+        is_mp3 = quality == "Chỉ Lấy Nhạc (MP3)"
+        ydl_opts = {
+            'format': fmt, 'quiet': True, 'no_warnings': True,
+            'progress_hooks': [self._hook], 'noplaylist': True,
+            'concurrent_fragment_downloads': 8, 'retries': 5, 'fragment_retries': 5,
+            'http_chunk_size': 10485760,
+            'socket_timeout': 30,
+            'noprogress': True,
+        }
+        if HAS_FFMPEG:
+            ydl_opts['merge_output_format'] = 'mp4'
+        if is_mp3:
+            if HAS_FFMPEG:
+                ydl_opts['postprocessors'] = [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}]
+                ydl_opts.pop('merge_output_format', None)
+            else:
+                ydl_opts['format'] = 'bestaudio/best'
+
+        self.after(0, lambda: (self.pbar.grid(), self.pbar.set(0)))
+        # Reuse single yt-dlp instance for entire batch
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            for i, url in enumerate(urls):
+                try:
+                    self.after(0, lambda idx=i+1, u=url: self.status.configure(
+                        text=f"[{idx}/{total}] Đang tải: {u[:50]}...", text_color="white"))
+                    tmp = os.path.join(self.download_path, f"_tmp_{threading.get_ident()}_{i}.%(ext)s")
+                    ydl.params['outtmpl'] = {'default': tmp}
+                    info = ydl.extract_info(url, download=True)
+                    if not info:
+                        failures.append((url, "Không lấy được thông tin video"))
+                        continue
+                    raw = info.get('fulltitle') or info.get('title') or ''
+                    if len(raw) < 5:
+                        d = info.get('description', '')
+                        if d: raw = d.split('\n')[0]
+                    if not raw: raw = info.get('alt_title') or 'video'
+                    clean = clean_filename(raw, info.get('id', 'x'))
+                    src = ydl.prepare_filename(info)
+                    if is_mp3:
+                        mp3 = os.path.splitext(src)[0] + ".mp3"
+                        if os.path.exists(mp3): src = mp3
+                    ext = os.path.splitext(src)[1]
+                    dst = os.path.join(self.download_path, f"{clean}{ext}")
+                    if os.path.exists(src):
+                        c = 1
+                        while os.path.exists(dst):
+                            dst = os.path.join(self.download_path, f"{clean} ({c}){ext}"); c += 1
+                        os.rename(src, dst); ok += 1
+                        self.history.append({"url": url, "title": clean, "type": "mp3" if is_mp3 else "video", "time": time.strftime("%Y-%m-%d %H:%M")})
+                    else:
+                        failures.append((url, "File không tồn tại sau khi tải"))
+                except Exception as e:
+                    err_short = str(e).split('\n')[0][:120]
+                    failures.append((url, err_short))
+                    self.after(0, lambda err=err_short: self.status.configure(
+                        text=f"❌ {err[:70]}", text_color="#ff7675"))
+        # Batch save history once
+        save_history(self.history)
+        self.after(0, lambda: self._finish(ok, total, is_channel, failures))
+
+    def _finish(self, ok, total, is_channel=False, failures=None):
+        failures = failures or []
+        self.btn_single.configure(state="normal"); self.btn_bulk.configure(state="normal"); self.btn_chan_dl.configure(state="normal")
+        self.pbar.set(1.0 if ok > 0 else 0)
+        self.status.configure(text=f"✅ Thành công {ok}/{total}!" if ok > 0 else f"❌ Thất bại {total}/{total}", text_color="white")
+        self._refresh_hist()
+        if ok > 0 and not failures:
+            messagebox.showinfo("Kết quả", f"✅ Đã tải {ok}/{total} {'video từ kênh' if is_channel else 'video'}.\n📁 {self.download_path}")
+        elif ok > 0 and failures:
+            detail = "\n".join([f"❌ {u[:60]}\n   ↳ {e[:80]}" for u, e in failures[:8]])
+            if len(failures) > 8: detail += f"\n... và {len(failures)-8} link khác thất bại"
+            messagebox.showwarning("Kết quả", f"✅ Thành công: {ok}/{total}\n❌ Thất bại: {len(failures)}\n\n{detail}")
+        elif failures:
+            detail = "\n".join([f"❌ {u[:60]}\n   ↳ {e[:80]}" for u, e in failures[:6]])
+            if len(failures) > 6: detail += f"\n... và {len(failures)-6} link khác"
+            messagebox.showerror("Thất bại", f"Không tải được {total} video.\n\n{detail}\n\n💡 Kiểm tra lại link hoặc kết nối mạng.")
+        elif total > 0:
+            messagebox.showerror("Thất bại", "Không tải được video.\n💡 Kiểm tra link hoặc kết nối mạng.")
+
+    def _hook(self, d):
+        if d['status'] == 'downloading':
+            now = time.time()
+            if now - self._last_hook_time < 0.25: return
+            self._last_hook_time = now
+            try:
+                p = float(d.get('_percent_str', '0%').replace('%', '').strip()) / 100
+                spd = d.get('_speed_str', ''); eta = d.get('_eta_str', '')
+                self.after(0, lambda: self.pbar.set(p))
+                self.after(0, lambda: self.status.configure(text=f"Đang tải: {d.get('_percent_str','0%')} — {spd} — ETA: {eta}"))
+            except: pass
+        elif d['status'] == 'finished':
+            self.after(0, lambda: (self.pbar.set(0.95), self.status.configure(text="Đang hoàn thiện...")))
+
+    # ===== THUMBNAIL =====
+    def on_thumb(self):
+        url = self.thumb_url.get().strip()
+        if not url: messagebox.showerror("Lỗi", "Nhập link!"); return
+        self.btn_thumb.configure(state="disabled"); self.thumb_info.configure(text="⏳ Đang tải...")
+        threading.Thread(target=self._thumb_work, args=([url],), daemon=True).start()
+
+    def on_thumb_bulk(self):
+        txt = self.thumb_bulk.get("1.0", "end").strip()
+        urls = [u.strip() for u in txt.split('\n') if u.strip().startswith('http')]
+        if not urls: messagebox.showerror("Lỗi", "Dán link!"); return
+        self.btn_thumb_bulk.configure(state="disabled")
+        threading.Thread(target=self._thumb_work, args=(urls,), daemon=True).start()
+
+    def _thumb_work(self, urls):
+        ok = 0
+        # Reuse single yt-dlp instance for all thumbnails — much faster
+        with yt_dlp.YoutubeDL({'quiet': True, 'no_warnings': True, 'skip_download': True, 'socket_timeout': 15}) as ydl:
+            for i, url in enumerate(urls):
+                try:
+                    self.after(0, lambda idx=i+1: self.thumb_info.configure(text=f"⏳ [{idx}/{len(urls)}]..."))
+                    info = ydl.extract_info(url, download=False)
+                    thumb = info.get('thumbnail')
+                    title = clean_filename(info.get('title', 'thumb'), info.get('id', 'x'))
+                    vid_id = info.get('id', '')
+                    if 'youtube' in info.get('extractor', '').lower() and vid_id:
+                        thumb = f"https://img.youtube.com/vi/{vid_id}/maxresdefault.jpg"
+                    if thumb:
+                        path = os.path.join(self.download_path, f"{title}_thumb.jpg")
+                        c = 1
+                        while os.path.exists(path): path = os.path.join(self.download_path, f"{title}_thumb ({c}).jpg"); c += 1
+                        urllib.request.urlretrieve(thumb, path); ok += 1
+                        self.history.append({"url": url, "title": title, "type": "thumbnail", "time": time.strftime("%Y-%m-%d %H:%M")})
+                except: pass
+        save_history(self.history)
+        self.after(0, lambda: self.thumb_info.configure(text=f"✅ Đã tải {ok}/{len(urls)} thumbnail"))
+        self.after(0, lambda: self.btn_thumb.configure(state="normal"))
+        self.after(0, lambda: self.btn_thumb_bulk.configure(state="normal"))
+        self.after(0, self._refresh_hist)
+
+    # ===== COFFEE FOOTER =====
+    def _build_coffee_footer(self):
+        foot = ctk.CTkFrame(self, fg_color="transparent")
+        foot.grid(row=2, column=0, pady=(0, 8), sticky="ew")
+        foot.grid_columnconfigure(0, weight=1)
+        foot.grid_columnconfigure(1, weight=1)
+        foot.grid_columnconfigure(2, weight=1)
+
+        # Dev Info (Bottom Left)
+        dev_frame = ctk.CTkFrame(foot, fg_color="transparent")
+        dev_frame.grid(row=0, column=0, sticky="sw", padx=16)
+        
+        dev_lbl = ctk.CTkLabel(dev_frame, text="💻 Dev by Hoàng Đức", font=ctk.CTkFont(family=self.FONT, size=12, weight="bold"), text_color="#3498db", cursor="hand2")
+        dev_lbl.pack(anchor="w")
+        dev_lbl.bind("<Button-1>", lambda e: webbrowser.open("https://www.facebook.com/ducserving"))
+        
+        dev_sub = ctk.CTkLabel(dev_frame, text="Hỗ trợ & Góp ý", font=ctk.CTkFont(family=self.FONT, size=10), text_color="#7f8c8d", cursor="hand2")
+        dev_sub.pack(anchor="w")
+        dev_sub.bind("<Button-1>", lambda e: webbrowser.open("https://www.facebook.com/ducserving"))
+
+        # Coffee Info (Centered)
+        coffee_frame = ctk.CTkFrame(foot, fg_color="transparent")
+        coffee_frame.grid(row=0, column=1)
+
+        # Load coffee.png
+        coffee_path = os.path.join(os.path.dirname(__file__), "coffee.png")
+        try:
+            ci = Image.open(coffee_path)
+            self._coffee_img = ctk.CTkImage(light_image=ci, dark_image=ci, size=(60, 60))
+        except:
+            self._coffee_img = None
+        # Coffee icon label
+        if self._coffee_img:
+            self.coffee_lbl = ctk.CTkLabel(coffee_frame, image=self._coffee_img, text="", fg_color="transparent", cursor="hand2")
+        else:
+            self.coffee_lbl = ctk.CTkLabel(coffee_frame, text="☕", font=ctk.CTkFont(size=36), text_color="#e67e22", cursor="hand2")
+        self.coffee_lbl.pack()
+        ctk.CTkLabel(coffee_frame, text="Mời cafe ☕", font=ctk.CTkFont(family=self.FONT, size=10), text_color="#665544").pack()
+        # QR popup
+        self._qr_popup = None
+        # Load QR once
+        self._qr_ctk_img = None
+        try:
+            qr_path = os.path.join(os.path.dirname(__file__), "real_qr.png")
+            if os.path.exists(qr_path):
+                qi = Image.open(qr_path)
+                self._qr_ctk_img = ctk.CTkImage(light_image=qi, dark_image=qi, size=(200, 200))
+        except: pass
+        # Bind hover
+        self.coffee_lbl.bind("<Enter>", self._show_qr)
+        self.coffee_lbl.bind("<Leave>", self._schedule_hide_qr)
+
+    def _show_qr(self, event=None):
+        if self._qr_popup and self._qr_popup.winfo_exists():
+            return
+        if not self._qr_ctk_img:
+            return
+        p = ctk.CTkToplevel(self)
+        p.overrideredirect(True)
+        p.attributes('-topmost', True)
+        p.configure(fg_color="#0d0906")
+        # Build content
+        ctk.CTkLabel(p, text="☕ Mời Cafe Tác Giả", font=ctk.CTkFont(family=self.FONT, size=16, weight="bold"),
+            text_color="#f0c070").pack(pady=(12, 6))
+        qf = ctk.CTkFrame(p, fg_color="white", corner_radius=10)
+        qf.pack(padx=16, pady=6)
+        ctk.CTkLabel(qf, image=self._qr_ctk_img, text="", fg_color="white").pack(padx=10, pady=10)
+        ctk.CTkLabel(p, text="Quét mã QR để chuyển khoản ☕✨",
+            font=ctk.CTkFont(family=self.FONT, size=11), text_color="#c0946a").pack(pady=(4, 10))
+        # Position above coffee icon
+        p.update_idletasks()
+        pw, ph = p.winfo_reqwidth(), p.winfo_reqheight()
+        cx = self.coffee_lbl.winfo_rootx() + self.coffee_lbl.winfo_width() // 2 - pw // 2
+        cy = self.coffee_lbl.winfo_rooty() - ph - 8
+        p.geometry(f"+{cx}+{cy}")
+        self._qr_popup = p
+        # Keep popup alive while mouse is on it
+        p.bind("<Enter>", lambda e: None)
+        p.bind("<Leave>", self._schedule_hide_qr)
+
+    def _schedule_hide_qr(self, event=None):
+        self.after(300, self._try_hide_qr)
+
+    def _try_hide_qr(self):
+        if not self._qr_popup or not self._qr_popup.winfo_exists():
+            return
+        try:
+            mx, my = self.winfo_pointerx(), self.winfo_pointery()
+            cx, cy = self.coffee_lbl.winfo_rootx(), self.coffee_lbl.winfo_rooty()
+            cw, ch = self.coffee_lbl.winfo_width(), self.coffee_lbl.winfo_height()
+            if cx <= mx <= cx + cw and cy <= my <= cy + ch:
+                return
+            px, py = self._qr_popup.winfo_rootx(), self._qr_popup.winfo_rooty()
+            pw, ph = self._qr_popup.winfo_width(), self._qr_popup.winfo_height()
+            if px <= mx <= px + pw and py <= my <= py + ph:
+                return
+        except: pass
+        self._qr_popup.destroy()
+        self._qr_popup = None
+
+if __name__ == "__main__":
+    app = VideoDownloaderApp()
+    app.mainloop()
+
