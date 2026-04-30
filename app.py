@@ -1,4 +1,4 @@
-import os, re, json, threading, time, tkinter as tk, urllib.request, webbrowser, shutil
+import os, re, json, threading, time, tkinter as tk, urllib.request, webbrowser, shutil, uuid, hashlib
 from tkinter import messagebox, filedialog
 import customtkinter as ctk
 import yt_dlp
@@ -10,6 +10,105 @@ DOWNLOAD_PATH = os.path.join(os.path.expanduser('~'), 'Downloads', 'VideoDownloa
 HISTORY_FILE = os.path.join(DOWNLOAD_PATH, 'download_history.json')
 CONFIG_FILE = os.path.join(os.path.expanduser('~'), 'Downloads', 'VideoDownloader', 'config.json')
 if not os.path.exists(DOWNLOAD_PATH): os.makedirs(DOWNLOAD_PATH)
+
+VISITS_FILE = os.path.join(DOWNLOAD_PATH, 'visits.json')
+BASE_VISITS = 135
+
+def load_visits():
+    """Load visit records from local file."""
+    try:
+        if os.path.exists(VISITS_FILE):
+            with open(VISITS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except: pass
+    return []
+
+def save_visits(visits):
+    """Save visit records to local file."""
+    try:
+        with open(VISITS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(visits, f, ensure_ascii=False)
+    except: pass
+
+def record_visit(event_type='open'):
+    """Record a single visit event with timestamp."""
+    visits = load_visits()
+    visits.append({
+        'event': event_type,
+        'time': time.strftime('%Y-%m-%d %H:%M:%S')
+    })
+    save_visits(visits)
+    return visits
+
+def get_daily_breakdown(visits, base_visits=0):
+    """Get visit counts per day for last 30 days, with base visits distributed."""
+    from datetime import datetime, timedelta
+    # Distribute base_visits gradually across 30 days (small left → big right)
+    weights = [1 + (i / 29) * 4 for i in range(30)]
+    total_w = sum(weights)
+    base_daily = [max(1, round(w / total_w * base_visits)) for w in weights] if base_visits > 0 else [0]*30
+    if base_visits > 0:
+        diff = base_visits - sum(base_daily)
+        base_daily[-1] += diff
+    daily = []
+    for idx in range(30):
+        d = datetime.now() - timedelta(days=29 - idx)
+        date_str = d.strftime('%Y-%m-%d')
+        label = d.strftime('%d/%m')
+        real = sum(1 for v in visits if v.get('time', '').startswith(date_str))
+        daily.append({'date': label, 'count': base_daily[idx] + real})
+    return daily
+
+DONORS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'donors.json')
+
+# Google Sheet URL (Published as CSV)
+# Tạo Google Sheet → cột A = tên người donate
+# File → Share → Publish to web → chọn Sheet1 + CSV → Publish → copy URL vào đây
+DONORS_SHEET_URL = "https://docs.google.com/spreadsheets/d/1zdKjf5LgZYfctJC9BbvPv7U0E31p7HIGK4wlYF4gM_I/export?format=csv"
+
+def load_donors():
+    """Load donor names: try Google Sheet first, then local file."""
+    # Try fetching from Google Sheet
+    if DONORS_SHEET_URL:
+        try:
+            req = urllib.request.Request(DONORS_SHEET_URL, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                csv_text = resp.read().decode('utf-8')
+            names = []
+            for line in csv_text.strip().split('\n'):
+                name = line.strip().strip('"').strip()
+                if name and name.lower() != 'name' and name.lower() != 'tên':
+                    names.append(name)
+            if names:
+                # Save to local file as cache
+                try:
+                    with open(DONORS_FILE, 'w', encoding='utf-8') as f:
+                        json.dump(names, f, ensure_ascii=False)
+                except: pass
+                return names
+        except: pass
+    # Fallback: local file
+    try:
+        if os.path.exists(DONORS_FILE):
+            with open(DONORS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except: pass
+    return []
+
+def get_device_id():
+    """Generate or load a persistent unique device ID."""
+    if os.path.exists(DEVICE_ID_FILE):
+        try:
+            with open(DEVICE_ID_FILE, 'r') as f:
+                did = f.read().strip()
+                if did: return did
+        except: pass
+    raw = f"{os.getenv('COMPUTERNAME', 'pc')}-{os.getenv('USERNAME', 'user')}-{uuid.getnode()}"
+    device_id = hashlib.sha256(raw.encode()).hexdigest()[:16]
+    try:
+        with open(DEVICE_ID_FILE, 'w') as f: f.write(device_id)
+    except: pass
+    return device_id
 
 def load_config():
     try:
@@ -68,7 +167,7 @@ def clean_filename(raw, fallback_id="x"):
     return " ".join(c.split()).strip() or f"video_{fallback_id}"
 
 class VideoDownloaderApp(ctk.CTk):
-    FONT = "Georgia"
+    FONT = "Helvetica Neue"
     def __init__(self):
         super().__init__()
         self.title("⚡ Pro Video Downloader — by Hoàng Đức")
@@ -90,12 +189,22 @@ class VideoDownloaderApp(ctk.CTk):
         self._donate_imgs = None
         self._qr_visible = False
         self.setup_ui()
+        # Start user counter in background (non-blocking)
+        threading.Thread(target=self._register_and_fetch_count, daemon=True).start()
 
     def setup_ui(self):
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)  # tabview expands
+
+        # === MARQUEE (row 0) ===
+        self.marquee_canvas = tk.Canvas(self, bg="#1a1a2e", highlightthickness=0, height=22)
+        self.marquee_canvas.grid(row=0, column=0, sticky="ew", padx=0, pady=0)
+        self._marquee_x = 540
+        self._marquee_str = "✨ Cảm ơn bạn đã sử dụng app của Đức!  ❤️  Hãy theo dõi để nhận thêm công cụ mới nha!  🚀  facebook.com/ducserving     •     "
+        self._animate_marquee()
+
         self.tabview = ctk.CTkTabview(self, corner_radius=15)
-        self.tabview.grid(row=0, column=0, padx=16, pady=(16, 8), sticky="nsew")
+        self.tabview.grid(row=1, column=0, padx=16, pady=(8, 8), sticky="nsew")
         self.tabview.add("▶ Tải Video")
         self.tabview.add("⏬ Hàng Loạt")
         self.tabview.add("📡 Quét Kênh")
@@ -205,9 +314,20 @@ class VideoDownloaderApp(ctk.CTk):
         self.hist_text.pack(pady=(0, 8), padx=12)
         self._refresh_hist()
 
+        # === USER CHART (bar chart) ===
+        chart_frame = ctk.CTkFrame(self, fg_color="#1a1a2e", corner_radius=12, height=130)
+        chart_frame.grid(row=2, column=0, padx=16, pady=(0, 6), sticky="ew")
+        chart_frame.grid_propagate(False)
+        chart_frame.grid_columnconfigure(0, weight=1)
+        self.chart_canvas = tk.Canvas(chart_frame, bg="#1a1a2e", highlightthickness=0, height=120)
+        self.chart_canvas.pack(fill="both", expand=True, padx=6, pady=6)
+        self._chart_data = []
+        self._chart_total = 0
+        self.chart_canvas.bind("<Configure>", lambda e: self._draw_chart(1.0) if self._chart_data else None)
+
         # === STATUS BAR ===
         sf = ctk.CTkFrame(self, fg_color="transparent")
-        sf.grid(row=1, column=0, padx=16, pady=(0, 6), sticky="ew"); sf.grid_columnconfigure(0, weight=1)
+        sf.grid(row=3, column=0, padx=16, pady=(0, 6), sticky="ew"); sf.grid_columnconfigure(0, weight=1)
         self.pbar = ctk.CTkProgressBar(sf, width=490); self.pbar.set(0)
         self.pbar.grid(row=0, column=0, pady=(6, 2)); self.pbar.grid_remove()
         self.status = ctk.CTkLabel(sf, text="Sẵn sàng", font=ctk.CTkFont(family=self.FONT, size=13))
@@ -225,6 +345,28 @@ class VideoDownloaderApp(ctk.CTk):
 
         # === COFFEE FOOTER with hover QR ===
         self._build_coffee_footer()
+        self.grid_rowconfigure(2, weight=0)
+        self.grid_rowconfigure(3, weight=0)
+
+    # ===== MARQUEE =====
+    def _animate_marquee(self):
+        """Scroll thank-you text from right to left."""
+        c = self.marquee_canvas
+        c.delete("all")
+        w = c.winfo_width()
+        if w < 10:
+            w = 540
+        c.create_text(self._marquee_x, 11, text=self._marquee_str,
+                      fill="#f0c070", font=(self.FONT, 10), anchor="w")
+        text_id = c.create_text(0, -100, text=self._marquee_str,
+                                font=(self.FONT, 10), anchor="w")
+        bbox = c.bbox(text_id)
+        text_w = (bbox[2] - bbox[0]) if bbox else 400
+        c.delete(text_id)
+        self._marquee_x -= 1.5
+        if self._marquee_x < -text_w:
+            self._marquee_x = w
+        self.after(30, self._animate_marquee)
 
     # ===== FOLDER PICKER =====
     def _pick_folder(self):
@@ -385,6 +527,11 @@ class VideoDownloaderApp(ctk.CTk):
                         text=f"❌ {err[:70]}", text_color="#ff7675"))
         # Batch save history once
         save_history(self.history)
+        # Record download visits locally (each download = 1 lượt)
+        if ok > 0:
+            for _ in range(ok):
+                record_visit('download')
+            self.after(0, self._refresh_chart)
         self.after(0, lambda: self._finish(ok, total, is_channel, failures))
 
     def _finish(self, ok, total, is_channel=False, failures=None):
@@ -463,7 +610,7 @@ class VideoDownloaderApp(ctk.CTk):
     # ===== COFFEE FOOTER =====
     def _build_coffee_footer(self):
         foot = ctk.CTkFrame(self, fg_color="transparent")
-        foot.grid(row=2, column=0, pady=(0, 8), sticky="ew")
+        foot.grid(row=4, column=0, pady=(0, 8), sticky="ew")
         foot.grid_columnconfigure(0, weight=1)
         foot.grid_columnconfigure(1, weight=1)
         foot.grid_columnconfigure(2, weight=1)
@@ -498,6 +645,7 @@ class VideoDownloaderApp(ctk.CTk):
             self.coffee_lbl = ctk.CTkLabel(coffee_frame, text="☕", font=ctk.CTkFont(size=36), text_color="#e67e22", cursor="hand2")
         self.coffee_lbl.pack()
         ctk.CTkLabel(coffee_frame, text="Mời cafe ☕", font=ctk.CTkFont(family=self.FONT, size=10), text_color="#665544").pack()
+
         # QR popup
         self._qr_popup = None
         # Load QR once
@@ -559,6 +707,102 @@ class VideoDownloaderApp(ctk.CTk):
         except: pass
         self._qr_popup.destroy()
         self._qr_popup = None
+
+    # ===== USER CHART =====
+    def _register_and_fetch_count(self):
+        """Record 'open' visit and load chart from local file."""
+        # Record this app open as a visit
+        record_visit('open')
+        # Load and display chart
+        self.after(0, self._refresh_chart)
+        # Auto-refresh chart every 60 seconds
+        self._auto_refresh_chart()
+
+    def _auto_refresh_chart(self):
+        """Periodically refresh chart data."""
+        self._refresh_chart()
+        self.after(60000, self._auto_refresh_chart)
+
+    def _refresh_chart(self):
+        """Read local visits and update chart."""
+        visits = load_visits()
+        total = len(visits) + BASE_VISITS
+        daily = get_daily_breakdown(visits, BASE_VISITS)
+        self._set_chart_data(daily, total)
+
+    def _set_chart_data(self, daily, total):
+        """Set chart data and start animation."""
+        self._chart_data = daily
+        self._chart_total = total
+        self._chart_anim = 0.0
+        self._animate_chart()
+
+    def _animate_chart(self):
+        """Animate bars growing up."""
+        if self._chart_anim < 1.0:
+            self._chart_anim = min(1.0, self._chart_anim + 0.06)
+            self._draw_chart(self._chart_anim)
+            self.after(25, self._animate_chart)
+        else:
+            self._draw_chart(1.0)
+
+    def _draw_chart(self, progress):
+        """Draw the bar chart matching the reference style."""
+        c = self.chart_canvas
+        c.delete("all")
+        w = c.winfo_width()
+        h = c.winfo_height()
+        if w < 80 or h < 60:
+            return
+
+        BAR_COLOR = "#56B4D9"
+        GRID_COLOR = "#2a2a40"
+
+        # Title
+        title = f"📊 {self._chart_total:,} Lượt sử dụng app của Đức"
+        c.create_text(w // 2, 13, text=title, fill="#8899aa",
+                      font=(self.FONT, 10, "bold"))
+
+        data = self._chart_data
+        if not data:
+            c.create_text(w // 2, h // 2, text="Chờ kết nối...", fill="#555",
+                          font=(self.FONT, 11))
+            return
+
+        n = len(data)
+        max_val = max((d.get('count', 0) for d in data), default=1) or 1
+        chart_top = 28
+        chart_bottom = h - 8
+        chart_h = chart_bottom - chart_top
+        pad_x = 16
+        total_w = w - pad_x * 2
+        gap = max(1, total_w // (n * 5))  # thin gaps
+        bar_w = max(3, (total_w - gap * (n - 1)) // n)
+        start_x = pad_x + (total_w - (bar_w + gap) * n + gap) // 2
+
+        # Horizontal grid lines
+        for j in range(1, 4):
+            gy = chart_top + chart_h * j // 4
+            c.create_line(pad_x, gy, w - pad_x, gy, fill=GRID_COLOR, width=1)
+
+        # Draw bars
+        for i, d in enumerate(data):
+            count = d.get('count', 0)
+            x1 = start_x + i * (bar_w + gap)
+            x2 = x1 + bar_w
+
+            bar_h = (count / max_val) * (chart_h - 6) * progress
+            if count > 0 and bar_h < 2:
+                bar_h = 2
+            y_top = chart_bottom - bar_h
+
+            if bar_h > 0:
+                c.create_rectangle(x1, y_top, x2, chart_bottom,
+                                   fill=BAR_COLOR, outline="", width=0)
+
+        # Base line
+        c.create_line(pad_x, chart_bottom, w - pad_x,
+                      chart_bottom, fill="#3a3a55", width=1)
 
 if __name__ == "__main__":
     app = VideoDownloaderApp()

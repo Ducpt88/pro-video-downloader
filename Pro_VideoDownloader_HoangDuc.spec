@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('coffee.png', '.'), ('donate.png', '.'), ('real_qr.png', '.'), ('icon.ico', '.')]
+datas = [('coffee.png', '.'), ('donate.png', '.'), ('real_qr.png', '.'), ('icon.ico', '.'), ('donors.json', '.')]
 binaries = []
 hiddenimports = []
 tmp_ret = collect_all('customtkinter')
