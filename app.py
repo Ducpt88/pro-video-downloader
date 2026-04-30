@@ -14,6 +14,9 @@ if not os.path.exists(DOWNLOAD_PATH): os.makedirs(DOWNLOAD_PATH)
 VISITS_FILE = os.path.join(DOWNLOAD_PATH, 'visits.json')
 BASE_VISITS = 135
 
+APP_VERSION = "1.1.0"
+GITHUB_REPO = "Ducpt88/pro-video-downloader"
+
 def load_visits():
     """Load visit records from local file."""
     try:
@@ -191,6 +194,8 @@ class VideoDownloaderApp(ctk.CTk):
         self.setup_ui()
         # Start user counter in background (non-blocking)
         threading.Thread(target=self._register_and_fetch_count, daemon=True).start()
+        # Check for updates in background
+        threading.Thread(target=self._check_for_updates, daemon=True).start()
 
     def setup_ui(self):
         self.grid_columnconfigure(0, weight=1)
@@ -367,6 +372,69 @@ class VideoDownloaderApp(ctk.CTk):
         if self._marquee_x < -text_w:
             self._marquee_x = w
         self.after(30, self._animate_marquee)
+
+    # ===== AUTO UPDATE CHECKER =====
+    def _check_for_updates(self):
+        """Check GitHub for newer version (background, non-blocking)."""
+        try:
+            time.sleep(3)  # Wait for app to fully load
+            api_url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+            req = urllib.request.Request(api_url, headers={
+                'User-Agent': 'ProVideoDownloader',
+                'Accept': 'application/vnd.github.v3+json'
+            })
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+            latest_tag = data.get('tag_name', '').lstrip('v')
+            if not latest_tag:
+                return
+            # Compare versions
+            current = tuple(int(x) for x in APP_VERSION.split('.'))
+            latest = tuple(int(x) for x in latest_tag.split('.'))
+            if latest > current:
+                download_url = data.get('html_url', f'https://github.com/{GITHUB_REPO}/releases/latest')
+                self.after(0, lambda: self._show_update_dialog(latest_tag, download_url))
+        except Exception:
+            pass
+
+    def _show_update_dialog(self, new_version, download_url):
+        """Show update notification popup."""
+        popup = ctk.CTkToplevel(self)
+        popup.title("🔔 Cập nhật mới!")
+        popup.geometry("400x200")
+        popup.resizable(False, False)
+        popup.transient(self)
+        popup.grab_set()
+        popup.configure(fg_color="#1a1a2e")
+
+        # Center on parent
+        popup.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - 400) // 2
+        y = self.winfo_y() + (self.winfo_height() - 200) // 2
+        popup.geometry(f"400x200+{x}+{y}")
+
+        ctk.CTkLabel(popup, text="🔔 Có bản cập nhật mới!",
+                     font=ctk.CTkFont(family=self.FONT, size=18, weight="bold"),
+                     text_color="#f0c070").pack(pady=(20, 8))
+
+        ctk.CTkLabel(popup, text=f"Phiên bản hiện tại: v{APP_VERSION}  →  Mới: v{new_version}",
+                     font=ctk.CTkFont(family=self.FONT, size=13),
+                     text_color="#aaa").pack(pady=(0, 16))
+
+        btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        btn_frame.pack(pady=(0, 10))
+
+        def _download():
+            webbrowser.open(download_url)
+            popup.destroy()
+
+        ctk.CTkButton(btn_frame, text="📥  TẢI NGAY", command=_download,
+                      fg_color="#2ecc71", hover_color="#27ae60", width=150, height=40,
+                      font=ctk.CTkFont(family=self.FONT, size=14, weight="bold")).pack(side="left", padx=(0, 10))
+
+        ctk.CTkButton(btn_frame, text="Để sau", command=popup.destroy,
+                      fg_color="#636e72", hover_color="#2d3436", width=100, height=40,
+                      font=ctk.CTkFont(family=self.FONT, size=13)).pack(side="left")
 
     # ===== FOLDER PICKER =====
     def _pick_folder(self):
