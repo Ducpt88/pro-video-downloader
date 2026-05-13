@@ -44,10 +44,16 @@ python app.py
 |-----------|--------|
 | ▶ **Tải Video** | Dán link → chọn chất lượng → tải ngay |
 | ⏬ **Tải Hàng Loạt** | Dán nhiều link cùng lúc, tải tất cả 1 lần |
-| 📡 **Quét Kênh** | Quét toàn bộ video của 1 kênh YouTube/TikTok và tải hàng loạt |
-| 🖼 **Tải Thumbnail** | Tải ảnh thumbnail chất lượng cao từ video |
-| 🕓 **Lịch Sử** | Lưu lại lịch sử tải, dễ quản lý |
+| 📡 **Quét Kênh** | Quét toàn bộ video của 1 kênh YouTube/Playlist và tải hàng loạt |
+| 🖼 **Tải Thumbnail** | Tải ảnh thumbnail chất lượng cao (lẻ + hàng loạt) |
+| 🕓 **Lịch Sử** | Lưu lại lịch sử tải, tối đa 500 video |
 | 📁 **Tùy chọn thư mục** | Chọn thư mục lưu file theo ý muốn |
+| 📊 **Tracking toàn cầu** | Đếm lượt sử dụng từ tất cả users (Google Sheet API) |
+| 📈 **Biểu đồ 30 ngày** | Bar chart animated hiển thị thống kê 30 ngày gần nhất |
+| 🔄 **Tự động cập nhật** | Kiểm tra phiên bản mới từ GitHub Releases |
+| ☕ **Mời Cafe QR** | Hover vào icon café để hiện mã QR chuyển khoản |
+| ⚡ **Đa luồng Turbo** | 8 luồng tải đồng thời, retry 15 lần, chunk 10MB |
+| 🎵 **Trích xuất MP3** | Tải chỉ audio dưới dạng MP3 (cần FFmpeg) |
 
 ---
 
@@ -89,6 +95,26 @@ YouTube • TikTok • Facebook • Instagram • Twitter/X • Reddit • Vimeo
 ---
 
 ## 📋 Changelog
+
+### v1.9.9 (2026-05-13)
+- 🔥 **ULTIMATE TURBO Edition**
+- ⚡ Tải đa luồng 8 threads + retry 15 lần + chunk 10MB
+- 🖼️ Tải Thumbnail hàng loạt (bulk thumbnail download)
+- 📊 Biểu đồ thống kê animated 30 ngày (bar chart)
+- 🔄 Tự động kiểm tra cập nhật từ GitHub Releases
+- ☕ QR popup hover — mời cafe tác giả
+- 🎨 Nút "⚡ BẮT ĐẦU TẢI NGAY" cho tab Hàng Loạt
+- 📐 Tối ưu layout UI — hiển thị đầy đủ trên mọi tab
+- 🛡️ Xử lý lỗi chi tiết — hiện rõ link nào thất bại và lý do
+- 📋 Nút paste nhanh (📋) cho ô nhập link
+- 🏷️ Marquee chạy chữ cảm ơn người dùng
+
+### v1.9.0 (2026-05-12)
+- 🚀 **Professional Edition**
+- ⚡ Giao diện mới với Header Logo chuyên nghiệp
+- 📊 Hệ thống Tracking toàn cầu (Google Sheet API)
+- 🖼️ Fix lỗi hiển thị Icon và Logo trên Windows
+- 🔧 Tối ưu hóa tốc độ tải và độ ổn định
 
 ### v1.0.0 (2026-04-29)
 - 🎉 Phiên bản đầu tiên

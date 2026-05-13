@@ -1,4 +1,4 @@
-import os, re, json, threading, time, tkinter as tk, urllib.request, webbrowser, shutil, uuid, hashlib
+import os, re, json, threading, time, tkinter as tk, urllib.request, webbrowser, shutil, uuid, hashlib, sys
 from tkinter import messagebox, filedialog
 import customtkinter as ctk
 import yt_dlp
@@ -6,15 +6,32 @@ from PIL import Image
 
 HAS_FFMPEG = shutil.which('ffmpeg') is not None
 
-DOWNLOAD_PATH = os.path.join(os.path.expanduser('~'), 'Downloads', 'VideoDownloader')
-HISTORY_FILE = os.path.join(DOWNLOAD_PATH, 'download_history.json')
-CONFIG_FILE = os.path.join(os.path.expanduser('~'), 'Downloads', 'VideoDownloader', 'config.json')
-if not os.path.exists(DOWNLOAD_PATH): os.makedirs(DOWNLOAD_PATH)
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
 
-VISITS_FILE = os.path.join(DOWNLOAD_PATH, 'visits.json')
+DOWNLOAD_PATH = os.path.join(os.path.expanduser('~'), 'Downloads', 'VideoDownloader')
+# --- App Data Path (Hidden) ---
+DATA_DIR = os.path.join(os.path.expanduser('~'), '.pro_video_downloader')
+if not os.path.exists(DATA_DIR): os.makedirs(DATA_DIR, exist_ok=True)
+
+HISTORY_FILE = os.path.join(DATA_DIR, 'download_history.json')
+CONFIG_FILE = os.path.join(DATA_DIR, 'config.json')
+VISITS_FILE = os.path.join(DATA_DIR, 'visits.json')
+DEVICE_ID_FILE = os.path.join(DATA_DIR, 'device_id.txt')
 BASE_VISITS = 135
 
-APP_VERSION = "1.1.0"
+# ============================================================
+# COUNTER_API_URL: Dán URL Web App từ Google Apps Script vào đây
+# (Sau khi Deploy > New deployment > Web App > Anyone)
+# ============================================================
+COUNTER_API_URL = "https://script.google.com/macros/s/AKfycbxkNRnQQjz57dU7arArG-GEsNKDMlxRhsXdD-A8Je5VpOzczJVthWIPb_V2quTizj6RCw/exec"
+
+APP_VERSION = "1.9.9"
 GITHUB_REPO = "Ducpt88/pro-video-downloader"
 
 def load_visits():
@@ -34,19 +51,48 @@ def save_visits(visits):
     except: pass
 
 def record_visit(event_type='open'):
-    """Record a single visit event with timestamp."""
+    """Record a visit: POST to Google Sheet API (centralized) + save locally."""
+    # Save locally first (always works)
     visits = load_visits()
     visits.append({
         'event': event_type,
         'time': time.strftime('%Y-%m-%d %H:%M:%S')
     })
     save_visits(visits)
-    return visits
+    # POST to Google Sheet API (centralized tracking)
+    api_result = None
+    if COUNTER_API_URL:
+        try:
+            device_id = get_device_id()
+            payload = json.dumps({'device_id': device_id, 'event': event_type}).encode('utf-8')
+            req = urllib.request.Request(
+                COUNTER_API_URL,
+                data=payload,
+                headers={'Content-Type': 'application/json', 'User-Agent': 'ProVideoDownloader'}
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                api_result = json.loads(resp.read().decode('utf-8'))
+        except Exception:
+            pass
+    return visits, api_result
 
-def get_daily_breakdown(visits, base_visits=0):
-    """Get visit counts per day for last 30 days, with base visits distributed."""
+def fetch_global_stats():
+    """GET tổng lượt sử dụng từ Google Sheet (tất cả users)."""
+    if not COUNTER_API_URL:
+        return None
+    try:
+        req = urllib.request.Request(
+            COUNTER_API_URL,
+            headers={'User-Agent': 'ProVideoDownloader'}
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode('utf-8'))
+    except Exception:
+        return None
+
+def get_daily_breakdown_local(visits, base_visits=0):
+    """Fallback: tính từ local data khi không có mạng."""
     from datetime import datetime, timedelta
-    # Distribute base_visits gradually across 30 days (small left → big right)
     weights = [1 + (i / 29) * 4 for i in range(30)]
     total_w = sum(weights)
     base_daily = [max(1, round(w / total_w * base_visits)) for w in weights] if base_visits > 0 else [0]*30
@@ -62,7 +108,7 @@ def get_daily_breakdown(visits, base_visits=0):
         daily.append({'date': label, 'count': base_daily[idx] + real})
     return daily
 
-DONORS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'donors.json')
+DONORS_FILE = resource_path('donors.json')
 
 # Google Sheet URL (Published as CSV)
 # Tạo Google Sheet → cột A = tên người donate
@@ -174,14 +220,18 @@ class VideoDownloaderApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("⚡ Pro Video Downloader — by Hoàng Đức")
-        self.geometry("540x800")
+        self.geometry("540x880")
         self.resizable(False, False)
         # Set window icon for titlebar + taskbar
         try:
-            icon_path = os.path.join(os.path.dirname(__file__), "icon.ico")
+            icon_path = resource_path("icon.ico")
             if os.path.exists(icon_path):
                 self.iconbitmap(icon_path)
-        except: pass
+        except:
+            try:
+                # Fallback for some Windows versions
+                self.wm_iconbitmap(icon_path)
+            except: pass
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
         cfg = load_config()
@@ -191,6 +241,7 @@ class VideoDownloaderApp(ctk.CTk):
         self._last_hook_time = 0
         self._donate_imgs = None
         self._qr_visible = False
+        self._global_stats = None
         self.setup_ui()
         # Start user counter in background (non-blocking)
         threading.Thread(target=self._register_and_fetch_count, daemon=True).start()
@@ -199,17 +250,41 @@ class VideoDownloaderApp(ctk.CTk):
 
     def setup_ui(self):
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=1)  # tabview expands
+        self.grid_rowconfigure(2, weight=1)  # tabview expands (Row 2)
 
-        # === MARQUEE (row 0) ===
+        # === HEADER LOGO & TITLE ===
+        header_frame = ctk.CTkFrame(self, fg_color="#1a1a2e", corner_radius=0)
+        header_frame.grid(row=0, column=0, sticky="ew", padx=0, pady=0)
+        
+        # Stylized Canvas Logo (Compact)
+        self.logo_canvas = tk.Canvas(header_frame, bg="#1a1a2e", highlightthickness=0, width=40, height=40)
+        self.logo_canvas.pack(side="left", padx=(14, 8), pady=6)
+        self.logo_canvas.create_oval(2, 2, 38, 38, outline="#00b894", width=2)
+        self.logo_canvas.create_oval(6, 6, 34, 34, outline="#55efc4", width=1)
+        self.logo_canvas.create_text(20, 20, text="⚡", fill="#f1c40f", font=(self.FONT, 22, "bold"))
+        
+        title_subframe = ctk.CTkFrame(header_frame, fg_color="transparent")
+        title_subframe.pack(side="left", pady=6)
+        
+        ctk.CTkLabel(title_subframe, text="PRO VIDEO DOWNLOADER", 
+                     font=ctk.CTkFont(family=self.FONT, size=16, weight="bold"),
+                     text_color="#00b894").pack(anchor="w")
+        ctk.CTkLabel(title_subframe, text="ULTIMATE TURBO v1.9.9", 
+                     font=ctk.CTkFont(family=self.FONT, size=9),
+                     text_color="#55efc4").pack(anchor="w")
+
+        # === MARQUEE (row 1) ===
         self.marquee_canvas = tk.Canvas(self, bg="#1a1a2e", highlightthickness=0, height=22)
-        self.marquee_canvas.grid(row=0, column=0, sticky="ew", padx=0, pady=0)
+        self.marquee_canvas.grid(row=1, column=0, sticky="ew", padx=0, pady=0)
         self._marquee_x = 540
         self._marquee_str = "✨ Cảm ơn bạn đã sử dụng app của Đức!  ❤️  Hãy theo dõi để nhận thêm công cụ mới nha!  🚀  facebook.com/ducserving     •     "
         self._animate_marquee()
 
-        self.tabview = ctk.CTkTabview(self, corner_radius=15)
-        self.tabview.grid(row=1, column=0, padx=16, pady=(8, 8), sticky="nsew")
+        self.tabview = ctk.CTkTabview(self, corner_radius=20, segmented_button_fg_color="#1a1a2e", 
+                                     segmented_button_selected_color="#00b894", 
+                                     segmented_button_selected_hover_color="#00a381",
+                                     segmented_button_unselected_color="#2c3e50")
+        self.tabview.grid(row=2, column=0, padx=16, pady=(8, 8), sticky="nsew")
         self.tabview.add("▶ Tải Video")
         self.tabview.add("⏬ Hàng Loạt")
         self.tabview.add("📡 Quét Kênh")
@@ -221,60 +296,63 @@ class VideoDownloaderApp(ctk.CTk):
         # === TAB 1: SINGLE ===
         t1 = self.tabview.tab("▶ Tải Video")
         t1.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(t1, text=f"🌐 {PLATFORMS}", font=ctk.CTkFont(family=self.FONT, size=10),
-            text_color="#888", wraplength=460).pack(pady=(12, 4))
-        ctk.CTkLabel(t1, text="Dán link video từ bất kỳ nền tảng nào",
-            font=ctk.CTkFont(family=self.FONT, size=15, weight="bold")).pack(pady=(2, 12))
-        uf = ctk.CTkFrame(t1, fg_color="transparent"); uf.pack(pady=(0, 10), fill="x", padx=12)
-        self.single_url = ctk.CTkEntry(uf, placeholder_text="https://...", height=46,
-            font=ctk.CTkFont(family=self.FONT, size=13))
-        self.single_url.pack(side="left", fill="x", expand=True, padx=(0, 8))
-        ctk.CTkButton(uf, text="📋", width=46, height=46, command=lambda: self._paste_to(self.single_url),
-            font=ctk.CTkFont(size=18), fg_color="#636e72", hover_color="#2d3436").pack(side="right")
-        qf = ctk.CTkFrame(t1, fg_color="transparent"); qf.pack(pady=(0, 14))
+        ctk.CTkLabel(t1, text=f"Hỗ trợ: {PLATFORMS}", font=ctk.CTkFont(family=self.FONT, size=10),
+            text_color="#666", wraplength=460).pack(pady=(12, 4))
+        
+        uf = ctk.CTkFrame(t1, fg_color="transparent"); uf.pack(pady=(10, 10), fill="x", padx=20)
+        self.single_url = ctk.CTkEntry(uf, placeholder_text="Dán link video tại đây...", height=50,
+            font=ctk.CTkFont(family=self.FONT, size=14), corner_radius=10)
+        self.single_url.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        ctk.CTkButton(uf, text="📋", width=50, height=50, command=lambda: self._paste_to(self.single_url),
+            font=ctk.CTkFont(size=20), fg_color="#444", hover_color="#555", corner_radius=10).pack(side="right")
+        
+        qf = ctk.CTkFrame(t1, fg_color="transparent"); qf.pack(pady=(5, 15))
         ctk.CTkLabel(qf, text="Chất lượng:", font=ctk.CTkFont(family=self.FONT, size=13)).pack(side="left", padx=(0, 10))
-        self.q_menu = ctk.CTkOptionMenu(qf, width=210, values=list(FORMAT_MAP.keys()))
+        self.q_menu = ctk.CTkOptionMenu(qf, width=220, height=36, values=list(FORMAT_MAP.keys()), corner_radius=8, fg_color="#2c3e50")
         self.q_menu.pack(side="left")
-        self.btn_single = ctk.CTkButton(t1, text="▶  BẮT ĐẦU TẢI", command=self.on_single, width=230, height=50,
-            font=ctk.CTkFont(family=self.FONT, size=15, weight="bold"), fg_color="#00b894", hover_color="#00a381")
-        self.btn_single.pack(pady=(0, 10))
+        
+        self.btn_single = ctk.CTkButton(t1, text="⚡  BẮT ĐẦU TẢI NGAY", command=self.on_single, width=280, height=54,
+            font=ctk.CTkFont(family=self.FONT, size=16, weight="bold"), fg_color="#00b894", hover_color="#00a381", corner_radius=12)
+        self.btn_single.pack(pady=(10, 10))
 
         # === TAB 2: BULK ===
         t2 = self.tabview.tab("⏬ Hàng Loạt")
         t2.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(t2, text="Dán danh sách link (mỗi dòng 1 link)",
-            font=ctk.CTkFont(family=self.FONT, size=15, weight="bold")).pack(pady=(14, 8))
-        self.bulk_text = ctk.CTkTextbox(t2, width=480, height=160,
-            font=ctk.CTkFont(family=self.FONT, size=12)); self.bulk_text.pack(pady=(0, 10), padx=12)
-        self.q_bulk = ctk.CTkOptionMenu(t2, width=210, values=list(FORMAT_MAP.keys()))
-        self.q_bulk.pack(pady=(0, 12))
-        self.btn_bulk = ctk.CTkButton(t2, text="⏬  TẢI TẤT CẢ", command=self.on_bulk, width=230, height=50,
-            font=ctk.CTkFont(family=self.FONT, size=15, weight="bold"), fg_color="#00b894", hover_color="#00a381")
-        self.btn_bulk.pack(pady=(0, 10))
+            font=ctk.CTkFont(family=self.FONT, size=14, weight="bold")).pack(pady=(10, 6))
+        self.bulk_text = ctk.CTkTextbox(t2, width=480, height=110,
+            font=ctk.CTkFont(family=self.FONT, size=12), corner_radius=10, border_width=1, border_color="#34495e")
+        self.bulk_text.pack(pady=(0, 8), padx=20)
+        self.q_bulk = ctk.CTkOptionMenu(t2, width=220, height=36, values=list(FORMAT_MAP.keys()), corner_radius=8, fg_color="#2c3e50")
+        self.q_bulk.pack(pady=(0, 8))
+        self.btn_bulk = ctk.CTkButton(t2, text="⚡  BẮT ĐẦU TẢI NGAY", command=self.on_bulk, width=320, height=52,
+            font=ctk.CTkFont(family=self.FONT, size=16, weight="bold"), fg_color="#00b894", hover_color="#00a381", corner_radius=12)
+        self.btn_bulk.pack(pady=(4, 8))
 
         # === TAB 3: CHANNEL SCAN ===
         t3 = self.tabview.tab("📡 Quét Kênh")
         t3.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(t3, text="Quét & Tải toàn bộ video của Kênh",
-            font=ctk.CTkFont(family=self.FONT, size=15, weight="bold")).pack(pady=(14, 4))
-        ctk.CTkLabel(t3, text="Dán URL kênh YouTube, TikTok profile, hoặc playlist.\nApp sẽ tự quét tất cả video và tải về.",
-            font=ctk.CTkFont(family=self.FONT, size=12), text_color="#aaa").pack(pady=(0, 10))
-        self.chan_url = ctk.CTkEntry(t3, placeholder_text="https://youtube.com/@ChannelName hoặc playlist URL",
-            width=480, height=46, font=ctk.CTkFont(family=self.FONT, size=13))
-        self.chan_url.pack(pady=(0, 8), padx=12)
-        self.q_chan = ctk.CTkOptionMenu(t3, width=210, values=list(FORMAT_MAP.keys()))
-        self.q_chan.pack(pady=(0, 8))
-        cf = ctk.CTkFrame(t3, fg_color="transparent"); cf.pack(pady=(0, 10))
-        ctk.CTkLabel(cf, text="Giới hạn:", font=ctk.CTkFont(family=self.FONT, size=13)).pack(side="left", padx=(0, 8))
-        self.chan_limit = ctk.CTkOptionMenu(cf, width=150, values=["Tất cả", "10 video", "20 video", "50 video", "100 video"])
+        ctk.CTkLabel(t3, text="Hỗ trợ: Quét Video từ Kênh/Playlist", font=ctk.CTkFont(family=self.FONT, size=10),
+            text_color="#666", wraplength=460).pack(pady=(12, 10))
+        
+        self.chan_url = ctk.CTkEntry(t3, placeholder_text="Dán URL kênh YouTube hoặc Playlist...",
+            width=480, height=50, font=ctk.CTkFont(family=self.FONT, size=14), corner_radius=10)
+        self.chan_url.pack(pady=(0, 15), padx=20)
+        
+        self.q_chan = ctk.CTkOptionMenu(t3, width=220, height=36, values=list(FORMAT_MAP.keys()), corner_radius=8, fg_color="#2c3e50")
+        self.q_chan.pack(pady=(0, 15))
+        
+        cf = ctk.CTkFrame(t3, fg_color="transparent"); cf.pack(pady=(0, 15))
+        ctk.CTkLabel(cf, text="Số lượng:", font=ctk.CTkFont(family=self.FONT, size=13)).pack(side="left", padx=(0, 8))
+        self.chan_limit = ctk.CTkOptionMenu(cf, width=140, height=32, values=["Tất cả", "10 video", "20 video", "50 video", "100 video"], corner_radius=8)
         self.chan_limit.pack(side="left")
-        bf = ctk.CTkFrame(t3, fg_color="transparent"); bf.pack(pady=(0, 8))
-        self.btn_scan = ctk.CTkButton(bf, text="🔍 QUÉT KÊNH", command=self.on_scan, width=155, height=44,
-            font=ctk.CTkFont(family=self.FONT, size=13, weight="bold"), fg_color="#6c5ce7", hover_color="#5a4bd1")
-        self.btn_scan.pack(side="left", padx=6)
-        self.btn_chan_dl = ctk.CTkButton(bf, text="⏬ TẢI TẤT CẢ", command=self.on_chan_download, width=155, height=44,
-            font=ctk.CTkFont(family=self.FONT, size=13, weight="bold"), fg_color="#00b894", hover_color="#00a381", state="disabled")
-        self.btn_chan_dl.pack(side="left", padx=6)
+        bf = ctk.CTkFrame(t3, fg_color="transparent"); bf.pack(pady=(0, 10))
+        self.btn_scan = ctk.CTkButton(bf, text="🔍 QUÉT KÊNH", command=self.on_scan, width=160, height=46,
+            font=ctk.CTkFont(family=self.FONT, size=13, weight="bold"), fg_color="#6c5ce7", hover_color="#5a4bd1", corner_radius=10)
+        self.btn_scan.pack(side="left", padx=8)
+        self.btn_chan_dl = ctk.CTkButton(bf, text="⏬ TẢI TẤT CẢ", command=self.on_chan_download, width=160, height=46,
+            font=ctk.CTkFont(family=self.FONT, size=13, weight="bold"), fg_color="#00b894", hover_color="#00a381", state="disabled", corner_radius=10)
+        self.btn_chan_dl.pack(side="left", padx=8)
         self.chan_info = ctk.CTkLabel(t3, text="", font=ctk.CTkFont(family=self.FONT, size=11), text_color="#8cf", wraplength=460)
         self.chan_info.pack(pady=(4, 4))
         self.chan_list = ctk.CTkTextbox(t3, width=480, height=110, state="disabled",
@@ -285,25 +363,29 @@ class VideoDownloaderApp(ctk.CTk):
         # === TAB 4: THUMBNAIL ===
         t4 = self.tabview.tab("🖼 Thumbnail")
         t4.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(t4, text="Tải Thumbnail chất lượng cao",
-            font=ctk.CTkFont(family=self.FONT, size=15, weight="bold")).pack(pady=(16, 10))
-        self.thumb_url = ctk.CTkEntry(t4, placeholder_text="https://youtube.com/watch?v=...",
-            width=480, height=46, font=ctk.CTkFont(family=self.FONT, size=13))
-        self.thumb_url.pack(pady=(0, 10), padx=12)
-        self.btn_thumb = ctk.CTkButton(t4, text="🖼  TẢI THUMBNAIL", command=self.on_thumb, width=230, height=50,
-            font=ctk.CTkFont(family=self.FONT, size=15, weight="bold"), fg_color="#6c5ce7", hover_color="#5a4bd1")
-        self.btn_thumb.pack(pady=(0, 6))
+        ctk.CTkLabel(t4, text="Hỗ trợ: Tải ảnh bìa chất lượng cao", font=ctk.CTkFont(family=self.FONT, size=10),
+            text_color="#666", wraplength=460).pack(pady=(12, 10))
+            
+        self.thumb_url = ctk.CTkEntry(t4, placeholder_text="Dán link video muốn lấy ảnh...",
+            width=480, height=50, font=ctk.CTkFont(family=self.FONT, size=14), corner_radius=10)
+        self.thumb_url.pack(pady=(0, 15), padx=20)
+        
+        self.btn_thumb = ctk.CTkButton(t4, text="🖼  TẢI THUMBNAIL LẺ", command=self.on_thumb, width=260, height=50,
+            font=ctk.CTkFont(family=self.FONT, size=15, weight="bold"), fg_color="#6c5ce7", hover_color="#5a4bd1", corner_radius=10)
+        self.btn_thumb.pack(pady=(0, 15))
+        
         self.thumb_info = ctk.CTkLabel(t4, text="", font=ctk.CTkFont(family=self.FONT, size=11),
             text_color="#8cf", wraplength=460)
-        self.thumb_info.pack(pady=(0, 6))
-        ctk.CTkLabel(t4, text="─── Tải hàng loạt thumbnail ───",
-            text_color="#555", font=ctk.CTkFont(family=self.FONT, size=11)).pack(pady=(8, 8))
-        self.thumb_bulk = ctk.CTkTextbox(t4, width=480, height=90,
-            font=ctk.CTkFont(family=self.FONT, size=12)); self.thumb_bulk.pack(pady=(0, 10), padx=12)
-        self.btn_thumb_bulk = ctk.CTkButton(t4, text="🖼  TẢI TẤT CẢ THUMBNAIL", command=self.on_thumb_bulk,
-            width=230, height=42, font=ctk.CTkFont(family=self.FONT, size=13, weight="bold"),
-            fg_color="#6c5ce7", hover_color="#5a4bd1")
-        self.btn_thumb_bulk.pack(pady=(0, 8))
+        self.thumb_info.pack(pady=(0, 10))
+        
+        self.thumb_bulk = ctk.CTkTextbox(t4, width=480, height=100,
+            font=ctk.CTkFont(family=self.FONT, size=12), corner_radius=10, border_width=1, border_color="#34495e")
+        self.thumb_bulk.pack(pady=(0, 15), padx=20)
+        
+        self.btn_thumb_bulk = ctk.CTkButton(t4, text="🖼  TẢI HÀNG LOẠT THUMBNAIL", command=self.on_thumb_bulk,
+            width=260, height=46, font=ctk.CTkFont(family=self.FONT, size=13, weight="bold"),
+            fg_color="#6c5ce7", hover_color="#5a4bd1", corner_radius=10)
+        self.btn_thumb_bulk.pack(pady=(0, 10))
 
         # === TAB 5: HISTORY ===
         t5 = self.tabview.tab("🕓 Lịch Sử")
@@ -320,19 +402,26 @@ class VideoDownloaderApp(ctk.CTk):
         self._refresh_hist()
 
         # === USER CHART (bar chart) ===
-        chart_frame = ctk.CTkFrame(self, fg_color="#1a1a2e", corner_radius=12, height=130)
-        chart_frame.grid(row=2, column=0, padx=16, pady=(0, 6), sticky="ew")
+        chart_frame = ctk.CTkFrame(self, fg_color="#1a1a2e", corner_radius=12, height=120)
+        chart_frame.grid(row=3, column=0, padx=16, pady=(0, 4), sticky="ew")
         chart_frame.grid_propagate(False)
         chart_frame.grid_columnconfigure(0, weight=1)
-        self.chart_canvas = tk.Canvas(chart_frame, bg="#1a1a2e", highlightthickness=0, height=120)
-        self.chart_canvas.pack(fill="both", expand=True, padx=6, pady=6)
+        
+        # Thêm Label tổng lượt sử dụng (Nổi bật)
+        self.total_lbl = ctk.CTkLabel(chart_frame, text=f"📊 {BASE_VISITS} Lượt sử dụng app của Đức",
+                                     font=ctk.CTkFont(family=self.FONT, size=14, weight="bold"),
+                                     text_color="#00b894")
+        self.total_lbl.pack(pady=(6, 0))
+
+        self.chart_canvas = tk.Canvas(chart_frame, bg="#1a1a2e", highlightthickness=0, height=75)
+        self.chart_canvas.pack(fill="both", expand=True, padx=6, pady=(0, 4))
         self._chart_data = []
-        self._chart_total = 0
+        self._chart_total = BASE_VISITS
         self.chart_canvas.bind("<Configure>", lambda e: self._draw_chart(1.0) if self._chart_data else None)
 
         # === STATUS BAR ===
         sf = ctk.CTkFrame(self, fg_color="transparent")
-        sf.grid(row=3, column=0, padx=16, pady=(0, 6), sticky="ew"); sf.grid_columnconfigure(0, weight=1)
+        sf.grid(row=4, column=0, padx=16, pady=(0, 6), sticky="ew"); sf.grid_columnconfigure(0, weight=1)
         self.pbar = ctk.CTkProgressBar(sf, width=490); self.pbar.set(0)
         self.pbar.grid(row=0, column=0, pady=(6, 2)); self.pbar.grid_remove()
         self.status = ctk.CTkLabel(sf, text="Sẵn sàng", font=ctk.CTkFont(family=self.FONT, size=13))
@@ -350,8 +439,9 @@ class VideoDownloaderApp(ctk.CTk):
 
         # === COFFEE FOOTER with hover QR ===
         self._build_coffee_footer()
-        self.grid_rowconfigure(2, weight=0)
         self.grid_rowconfigure(3, weight=0)
+        self.grid_rowconfigure(4, weight=0)
+        self.grid_rowconfigure(5, weight=0)
 
     # ===== MARQUEE =====
     def _animate_marquee(self):
@@ -541,9 +631,11 @@ class VideoDownloaderApp(ctk.CTk):
         ydl_opts = {
             'format': fmt, 'quiet': True, 'no_warnings': True,
             'progress_hooks': [self._hook], 'noplaylist': True,
-            'concurrent_fragment_downloads': 8, 'retries': 5, 'fragment_retries': 5,
-            'http_chunk_size': 10485760,
-            'socket_timeout': 30,
+            'concurrent_fragment_downloads': 8, # Tối ưu đa luồng
+            'retries': 15,
+            'fragment_retries': 15,
+            'http_chunk_size': 10485760, # 10MB chunks để tải mượt hơn
+            'socket_timeout': 45,
             'noprogress': True,
         }
         if HAS_FFMPEG:
@@ -595,7 +687,7 @@ class VideoDownloaderApp(ctk.CTk):
                         text=f"❌ {err[:70]}", text_color="#ff7675"))
         # Batch save history once
         save_history(self.history)
-        # Record download visits locally (each download = 1 lượt)
+        # Record download visits (gửi lên Google Sheet + local)
         if ok > 0:
             for _ in range(ok):
                 record_visit('download')
@@ -678,7 +770,7 @@ class VideoDownloaderApp(ctk.CTk):
     # ===== COFFEE FOOTER =====
     def _build_coffee_footer(self):
         foot = ctk.CTkFrame(self, fg_color="transparent")
-        foot.grid(row=4, column=0, pady=(0, 8), sticky="ew")
+        foot.grid(row=5, column=0, pady=(0, 8), sticky="ew")
         foot.grid_columnconfigure(0, weight=1)
         foot.grid_columnconfigure(1, weight=1)
         foot.grid_columnconfigure(2, weight=1)
@@ -700,7 +792,7 @@ class VideoDownloaderApp(ctk.CTk):
         coffee_frame.grid(row=0, column=1)
 
         # Load coffee.png
-        coffee_path = os.path.join(os.path.dirname(__file__), "coffee.png")
+        coffee_path = resource_path("coffee.png")
         try:
             ci = Image.open(coffee_path)
             self._coffee_img = ctk.CTkImage(light_image=ci, dark_image=ci, size=(60, 60))
@@ -719,7 +811,7 @@ class VideoDownloaderApp(ctk.CTk):
         # Load QR once
         self._qr_ctk_img = None
         try:
-            qr_path = os.path.join(os.path.dirname(__file__), "real_qr.png")
+            qr_path = resource_path("real_qr.png")
             if os.path.exists(qr_path):
                 qi = Image.open(qr_path)
                 self._qr_ctk_img = ctk.CTkImage(light_image=qi, dark_image=qi, size=(200, 200))
@@ -778,30 +870,51 @@ class VideoDownloaderApp(ctk.CTk):
 
     # ===== USER CHART =====
     def _register_and_fetch_count(self):
-        """Record 'open' visit and load chart from local file."""
-        # Record this app open as a visit
-        record_visit('open')
-        # Load and display chart
-        self.after(0, self._refresh_chart)
-        # Auto-refresh chart every 60 seconds
+        """Record 'open' visit → POST lên Google Sheet → hiển thị tổng toàn cầu."""
+        # Record this app open (POST to API + local)
+        _, api_result = record_visit('open')
+        # If API returned data, use it directly
+        if api_result and 'total_visits' in api_result:
+            total = api_result['total_visits'] + BASE_VISITS
+            daily = api_result.get('daily', [])
+            self._global_stats = api_result
+            self.after(0, lambda: self._set_chart_data(daily, total))
+        else:
+            # Fallback to local
+            self.after(0, self._refresh_chart)
+        # Auto-refresh chart every 60 seconds (fetch from API)
         self._auto_refresh_chart()
 
     def _auto_refresh_chart(self):
-        """Periodically refresh chart data."""
-        self._refresh_chart()
+        """Periodically refresh chart from Google Sheet API."""
+        threading.Thread(target=self._refresh_chart_from_api, daemon=True).start()
         self.after(60000, self._auto_refresh_chart)
 
+    def _refresh_chart_from_api(self):
+        """Fetch global stats from API in background thread."""
+        stats = fetch_global_stats()
+        if stats and 'total_visits' in stats:
+            total = stats['total_visits'] + BASE_VISITS
+            daily = stats.get('daily', [])
+            self._global_stats = stats
+            self.after(0, lambda: self._set_chart_data(daily, total))
+        else:
+            self.after(0, self._refresh_chart)
+
     def _refresh_chart(self):
-        """Read local visits and update chart."""
+        """Fallback: đọc local visits khi không có mạng."""
         visits = load_visits()
         total = len(visits) + BASE_VISITS
-        daily = get_daily_breakdown(visits, BASE_VISITS)
+        daily = get_daily_breakdown_local(visits, BASE_VISITS)
         self._set_chart_data(daily, total)
 
     def _set_chart_data(self, daily, total):
         """Set chart data and start animation."""
         self._chart_data = daily
         self._chart_total = total
+        try:
+            self.total_lbl.configure(text=f"📊 {total:,} Lượt sử dụng app của Đức")
+        except: pass
         self._chart_anim = 0.0
         self._animate_chart()
 
@@ -826,11 +939,6 @@ class VideoDownloaderApp(ctk.CTk):
         BAR_COLOR = "#56B4D9"
         GRID_COLOR = "#2a2a40"
 
-        # Title
-        title = f"📊 {self._chart_total:,} Lượt sử dụng app của Đức"
-        c.create_text(w // 2, 13, text=title, fill="#8899aa",
-                      font=(self.FONT, 10, "bold"))
-
         data = self._chart_data
         if not data:
             c.create_text(w // 2, h // 2, text="Chờ kết nối...", fill="#555",
@@ -839,7 +947,7 @@ class VideoDownloaderApp(ctk.CTk):
 
         n = len(data)
         max_val = max((d.get('count', 0) for d in data), default=1) or 1
-        chart_top = 28
+        chart_top = 8
         chart_bottom = h - 8
         chart_h = chart_bottom - chart_top
         pad_x = 16
