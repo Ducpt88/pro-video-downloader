@@ -1,4 +1,4 @@
-import os, re, json, threading, time, tkinter as tk, urllib.request, webbrowser, shutil, uuid, hashlib, sys
+import os, re, json, threading, time, tkinter as tk, urllib.request, webbrowser, shutil, uuid, hashlib, sys, tempfile, subprocess
 from tkinter import messagebox, filedialog
 import customtkinter as ctk
 import yt_dlp
@@ -23,7 +23,7 @@ HISTORY_FILE = os.path.join(DATA_DIR, 'download_history.json')
 CONFIG_FILE = os.path.join(DATA_DIR, 'config.json')
 VISITS_FILE = os.path.join(DATA_DIR, 'visits.json')
 DEVICE_ID_FILE = os.path.join(DATA_DIR, 'device_id.txt')
-BASE_VISITS = 135
+BASE_VISITS = 0
 
 # ============================================================
 # COUNTER_API_URL: Dán URL Web App từ Google Apps Script vào đây
@@ -31,7 +31,7 @@ BASE_VISITS = 135
 # ============================================================
 COUNTER_API_URL = "https://script.google.com/macros/s/AKfycbxkNRnQQjz57dU7arArG-GEsNKDMlxRhsXdD-A8Je5VpOzczJVthWIPb_V2quTizj6RCw/exec"
 
-APP_VERSION = "1.9.9"
+APP_VERSION = "1.9.10"
 GITHUB_REPO = "Ducpt88/pro-video-downloader"
 
 def load_visits():
@@ -91,21 +91,15 @@ def fetch_global_stats():
         return None
 
 def get_daily_breakdown_local(visits, base_visits=0):
-    """Fallback: tính từ local data khi không có mạng."""
+    """Fallback: use exact local events only, no fake base count."""
     from datetime import datetime, timedelta
-    weights = [1 + (i / 29) * 4 for i in range(30)]
-    total_w = sum(weights)
-    base_daily = [max(1, round(w / total_w * base_visits)) for w in weights] if base_visits > 0 else [0]*30
-    if base_visits > 0:
-        diff = base_visits - sum(base_daily)
-        base_daily[-1] += diff
     daily = []
     for idx in range(30):
         d = datetime.now() - timedelta(days=29 - idx)
         date_str = d.strftime('%Y-%m-%d')
         label = d.strftime('%d/%m')
         real = sum(1 for v in visits if v.get('time', '').startswith(date_str))
-        daily.append({'date': label, 'count': base_daily[idx] + real})
+        daily.append({'date': label, 'count': real})
     return daily
 
 DONORS_FILE = resource_path('donors.json')
@@ -269,7 +263,7 @@ class VideoDownloaderApp(ctk.CTk):
         ctk.CTkLabel(title_subframe, text="PRO VIDEO DOWNLOADER", 
                      font=ctk.CTkFont(family=self.FONT, size=16, weight="bold"),
                      text_color="#00b894").pack(anchor="w")
-        ctk.CTkLabel(title_subframe, text="ULTIMATE TURBO v1.9.9", 
+        ctk.CTkLabel(title_subframe, text="ULTIMATE TURBO v1.9.10", 
                      font=ctk.CTkFont(family=self.FONT, size=9),
                      text_color="#55efc4").pack(anchor="w")
 
@@ -408,7 +402,7 @@ class VideoDownloaderApp(ctk.CTk):
         chart_frame.grid_columnconfigure(0, weight=1)
         
         # Thêm Label tổng lượt sử dụng (Nổi bật)
-        self.total_lbl = ctk.CTkLabel(chart_frame, text=f"📊 {BASE_VISITS} Lượt sử dụng app của Đức",
+        self.total_lbl = ctk.CTkLabel(chart_frame, text="Syncing usage count...",
                                      font=ctk.CTkFont(family=self.FONT, size=14, weight="bold"),
                                      text_color="#00b894")
         self.total_lbl.pack(pady=(6, 0))
@@ -416,7 +410,7 @@ class VideoDownloaderApp(ctk.CTk):
         self.chart_canvas = tk.Canvas(chart_frame, bg="#1a1a2e", highlightthickness=0, height=75)
         self.chart_canvas.pack(fill="both", expand=True, padx=6, pady=(0, 4))
         self._chart_data = []
-        self._chart_total = BASE_VISITS
+        self._chart_total = 0
         self.chart_canvas.bind("<Configure>", lambda e: self._draw_chart(1.0) if self._chart_data else None)
 
         # === STATUS BAR ===
@@ -464,67 +458,101 @@ class VideoDownloaderApp(ctk.CTk):
         self.after(30, self._animate_marquee)
 
     # ===== AUTO UPDATE CHECKER =====
+    @staticmethod
+    def _version_tuple(value):
+        parts = re.findall(r'\d+', str(value or ''))
+        return tuple(int(x) for x in parts[:4]) if parts else (0,)
+
+    @staticmethod
+    def _find_release_exe_asset(release_data):
+        assets = release_data.get('assets') or []
+        exe_assets = [a for a in assets if str(a.get('name', '')).lower().endswith('.exe')]
+        if not exe_assets:
+            return None
+        preferred = [a for a in exe_assets if 'setup' not in str(a.get('name', '')).lower()]
+        return (preferred or exe_assets)[0]
+
     def _check_for_updates(self):
-        """Check GitHub for newer version (background, non-blocking)."""
+        """Automatically install newer GitHub release when it contains an .exe asset."""
         try:
-            time.sleep(3)  # Wait for app to fully load
+            time.sleep(3)
             api_url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
             req = urllib.request.Request(api_url, headers={
                 'User-Agent': 'ProVideoDownloader',
                 'Accept': 'application/vnd.github.v3+json'
             })
             with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode())
+                data = json.loads(resp.read().decode('utf-8'))
             latest_tag = data.get('tag_name', '').lstrip('v')
             if not latest_tag:
                 return
-            # Compare versions
-            current = tuple(int(x) for x in APP_VERSION.split('.'))
-            latest = tuple(int(x) for x in latest_tag.split('.'))
-            if latest > current:
-                download_url = data.get('html_url', f'https://github.com/{GITHUB_REPO}/releases/latest')
-                self.after(0, lambda: self._show_update_dialog(latest_tag, download_url))
+            if self._version_tuple(latest_tag) <= self._version_tuple(APP_VERSION):
+                return
+            asset = self._find_release_exe_asset(data)
+            if asset and asset.get('browser_download_url'):
+                self.after(0, lambda: self.status.configure(text=f"Auto updating to v{latest_tag}...", text_color="#f0c070"))
+                self._download_and_install_update(latest_tag, asset['browser_download_url'])
+            else:
+                release_url = data.get('html_url', f'https://github.com/{GITHUB_REPO}/releases/latest')
+                self.after(0, lambda: self._show_update_missing_asset_dialog(latest_tag, release_url))
         except Exception:
             pass
 
-    def _show_update_dialog(self, new_version, download_url):
-        """Show update notification popup."""
-        popup = ctk.CTkToplevel(self)
-        popup.title("🔔 Cập nhật mới!")
-        popup.geometry("400x200")
-        popup.resizable(False, False)
-        popup.transient(self)
-        popup.grab_set()
-        popup.configure(fg_color="#1a1a2e")
+    def _download_and_install_update(self, new_version, download_url):
+        """Download new exe, then spawn a small updater script to replace this exe after exit."""
+        try:
+            current_exe = sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(__file__)
+            if not current_exe.lower().endswith('.exe'):
+                self.after(0, lambda: self._show_update_dialog(new_version, download_url))
+                return
+            update_dir = os.path.join(tempfile.gettempdir(), 'pro_video_downloader_update')
+            os.makedirs(update_dir, exist_ok=True)
+            new_exe = os.path.join(update_dir, f'Pro_VideoDownloader_v{new_version}.exe')
+            req = urllib.request.Request(download_url, headers={'User-Agent': 'ProVideoDownloader'})
+            with urllib.request.urlopen(req, timeout=60) as resp, open(new_exe, 'wb') as f:
+                shutil.copyfileobj(resp, f)
+            if os.path.getsize(new_exe) < 1024 * 1024:
+                raise RuntimeError('Downloaded update is too small')
+            bat_path = os.path.join(update_dir, 'apply_update.bat')
+            bat = """@echo off
+setlocal
+set "NEW_EXE={new_exe}"
+set "TARGET_EXE={current_exe}"
+set "PID={pid}"
+:wait_loop
+tasklist /FI "PID eq %PID%" | find "%PID%" >nul
+if not errorlevel 1 (timeout /t 1 /nobreak >nul & goto wait_loop)
+copy /Y "%NEW_EXE%" "%TARGET_EXE%"
+start "" "%TARGET_EXE%"
+del "%NEW_EXE%" >nul 2>nul
+del "%~f0" >nul 2>nul
+""".format(new_exe=new_exe, current_exe=current_exe, pid=os.getpid())
+            with open(bat_path, 'w', encoding='utf-8') as f:
+                f.write(bat.replace('\n', '\r\n'))
+            subprocess.Popen(['cmd', '/c', bat_path], close_fds=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            self.after(0, lambda: messagebox.showinfo('Updating', f'Downloaded v{new_version}. The app will restart automatically.'))
+            self.after(700, self.destroy)
+        except Exception as e:
+            self.after(0, lambda err=str(e): self._show_update_error_dialog(new_version, download_url, err))
 
-        # Center on parent
-        popup.update_idletasks()
-        x = self.winfo_x() + (self.winfo_width() - 400) // 2
-        y = self.winfo_y() + (self.winfo_height() - 200) // 2
-        popup.geometry(f"400x200+{x}+{y}")
+    def _show_update_missing_asset_dialog(self, new_version, release_url):
+        messagebox.showwarning(
+            'Missing update file',
+            f'Version v{new_version} exists, but the GitHub release has no .exe asset, so auto-update cannot install it.\n\n'
+            'Upload Pro_VideoDownloader_HoangDuc.exe to the release Assets for auto-update to work.'
+        )
+        webbrowser.open(release_url)
 
-        ctk.CTkLabel(popup, text="🔔 Có bản cập nhật mới!",
-                     font=ctk.CTkFont(family=self.FONT, size=18, weight="bold"),
-                     text_color="#f0c070").pack(pady=(20, 8))
-
-        ctk.CTkLabel(popup, text=f"Phiên bản hiện tại: v{APP_VERSION}  →  Mới: v{new_version}",
-                     font=ctk.CTkFont(family=self.FONT, size=13),
-                     text_color="#aaa").pack(pady=(0, 16))
-
-        btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
-        btn_frame.pack(pady=(0, 10))
-
-        def _download():
+    def _show_update_error_dialog(self, new_version, download_url, error):
+        msg = f'Could not auto-update to v{new_version}:\n{error}\n\nOpen the download page?'
+        if messagebox.askyesno('Update failed', msg):
             webbrowser.open(download_url)
-            popup.destroy()
 
-        ctk.CTkButton(btn_frame, text="📥  TẢI NGAY", command=_download,
-                      fg_color="#2ecc71", hover_color="#27ae60", width=150, height=40,
-                      font=ctk.CTkFont(family=self.FONT, size=14, weight="bold")).pack(side="left", padx=(0, 10))
-
-        ctk.CTkButton(btn_frame, text="Để sau", command=popup.destroy,
-                      fg_color="#636e72", hover_color="#2d3436", width=100, height=40,
-                      font=ctk.CTkFont(family=self.FONT, size=13)).pack(side="left")
+    def _show_update_dialog(self, new_version, download_url):
+        """Manual fallback for non-frozen/dev runs."""
+        msg = f'Current version: v{APP_VERSION}\nNew version: v{new_version}\n\nOpen the download page?'
+        if messagebox.askyesno('Update available', msg):
+            webbrowser.open(download_url)
 
     # ===== FOLDER PICKER =====
     def _pick_folder(self):
@@ -875,10 +903,10 @@ class VideoDownloaderApp(ctk.CTk):
         _, api_result = record_visit('open')
         # If API returned data, use it directly
         if api_result and 'total_visits' in api_result:
-            total = api_result['total_visits'] + BASE_VISITS
+            total = int(api_result.get('total_visits') or 0)
             daily = api_result.get('daily', [])
             self._global_stats = api_result
-            self.after(0, lambda: self._set_chart_data(daily, total))
+            self.after(0, lambda: self._set_chart_data(daily, total, source="sheet"))
         else:
             # Fallback to local
             self.after(0, self._refresh_chart)
@@ -894,26 +922,27 @@ class VideoDownloaderApp(ctk.CTk):
         """Fetch global stats from API in background thread."""
         stats = fetch_global_stats()
         if stats and 'total_visits' in stats:
-            total = stats['total_visits'] + BASE_VISITS
+            total = int(stats.get('total_visits') or 0)
             daily = stats.get('daily', [])
             self._global_stats = stats
-            self.after(0, lambda: self._set_chart_data(daily, total))
+            self.after(0, lambda: self._set_chart_data(daily, total, source="sheet"))
         else:
             self.after(0, self._refresh_chart)
 
     def _refresh_chart(self):
         """Fallback: đọc local visits khi không có mạng."""
         visits = load_visits()
-        total = len(visits) + BASE_VISITS
-        daily = get_daily_breakdown_local(visits, BASE_VISITS)
-        self._set_chart_data(daily, total)
+        total = len(visits)
+        daily = get_daily_breakdown_local(visits, 0)
+        self._set_chart_data(daily, total, source="local")
 
-    def _set_chart_data(self, daily, total):
+    def _set_chart_data(self, daily, total, source="sheet"):
         """Set chart data and start animation."""
         self._chart_data = daily
         self._chart_total = total
         try:
-            self.total_lbl.configure(text=f"📊 {total:,} Lượt sử dụng app của Đức")
+            label = f"{total:,} uses from Google Sheet" if source == "sheet" else f"{total:,} local uses (Sheet not connected)"
+            self.total_lbl.configure(text=label)
         except: pass
         self._chart_anim = 0.0
         self._animate_chart()
