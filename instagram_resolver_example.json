@@ -1,0 +1,6 @@
+{
+  "instagram_cobalt_api_url": "https://your-cobalt-instance.example/",
+  "instagram_cobalt_auth": "Api-Key optional-if-your-instance-needs-it",
+  "instagram_resolver_url": "https://your-custom-resolver.example/instagram",
+  "instagram_resolver_auth": "Bearer optional-token"
+}
