@@ -29,16 +29,16 @@ BASE_VISITS = 228
 USAGE_TOTAL_FLOOR = 228
 
 # ============================================================
-# COUNTER_API_URL: DÃ¡n URL Web App tá»« Google Apps Script vÃ o Ä‘Ã¢y
+# COUNTER_API_URL: Dán URL Web App từ Google Apps Script vào đây
 # (Sau khi Deploy > New deployment > Web App > Anyone)
 
 # ============================================================
-# COUNTER_API_URL: DÃ¡n URL Web App tá»« Google Apps Script vÃ o Ä‘Ã¢y
+# COUNTER_API_URL: Dán URL Web App từ Google Apps Script vào đây
 # (Sau khi Deploy > New deployment > Web App > Anyone)
 # ============================================================
 COUNTER_API_URL = "https://script.google.com/macros/s/AKfycbxIq7IRGgdarnzgl-EB8Hf5dZ36L4OKhJo6XoXwRlTexzPiIxo_IBuYYbTIhURQpFsILA/exec"
 
-APP_VERSION = "1.9.13"
+APP_VERSION = "1.9.14"
 GITHUB_REPO = "Ducpt88/pro-video-downloader"
 
 def load_visits():
@@ -62,7 +62,7 @@ def record_visit(event_type='open'):
        Automatically syncs any previously failed/offline visits."""
     visits = load_visits()
     
-    # ThÃªm lÆ°á»£t truy cáº­p má»›i vÃ o mÃ¡y (máº·c Ä‘á»‹nh chÆ°a Ä‘á»“ng bá»™)
+    # Thêm lượt truy cập mới vào máy (mặc định chưa đồng bộ)
     new_visit = {
         'event': event_type,
         'time': time.strftime('%Y-%m-%d %H:%M:%S'),
@@ -74,7 +74,7 @@ def record_visit(event_type='open'):
     api_result = None
     if COUNTER_API_URL:
         device_id = get_device_id()
-        # TÃ¬m táº¥t cáº£ nhá»¯ng lÆ°á»£t chÆ°a Ä‘Æ°á»£c Ä‘á»“ng bá»™ (ká»ƒ cáº£ nhá»¯ng ngÃ y trÆ°á»›c bá»‹ rá»›t máº¡ng)
+        # Tìm tất cả những lượt chưa được đồng bộ (kể cả những ngày trước bị rớt mạng)
         unsynced_visits = [v for v in visits if not v.get('synced')]
         success_count = 0
         
@@ -89,11 +89,11 @@ def record_visit(event_type='open'):
                 with urllib.request.urlopen(req, timeout=5) as resp:
                     api_result = json.loads(resp.read().decode('utf-8'))
                 
-                # ÄÃ¡nh dáº¥u lÃ  Ä‘Ã£ Ä‘á»“ng bá»™ thÃ nh cÃ´ng lÃªn Google Sheet
+                # Đánh dấu là đã đồng bộ thành công lên Google Sheet
                 v['synced'] = True
                 success_count += 1
             except Exception:
-                # Náº¿u rá»›t máº¡ng hoáº·c lá»—i Google, dá»«ng láº¡i khÃ´ng cá»‘ gá»­i tiáº¿p, Ä‘á»ƒ láº§n sau má»Ÿ app gá»­i bÃ¹
+                # Nếu rớt mạng hoặc lỗi Google, dừng lại không cố gửi tiếp, để lần sau mở app gửi bù
                 break
                 
         if success_count > 0:
@@ -102,7 +102,7 @@ def record_visit(event_type='open'):
     return visits, api_result
 
 def fetch_global_stats():
-    """GET tá»•ng lÆ°á»£t sá»­ dá»¥ng tá»« Google Sheet (táº¥t cáº£ users)."""
+    """GET tổng lượt sử dụng từ Google Sheet (tất cả users)."""
     if not COUNTER_API_URL:
         return None
     try:
@@ -145,8 +145,8 @@ def summarize_local_usage(visits):
 DONORS_FILE = resource_path('donors.json')
 
 # Google Sheet URL (Published as CSV)
-# Táº¡o Google Sheet â†’ cá»™t A = tÃªn ngÆ°á»i donate
-# File â†’ Share â†’ Publish to web â†’ chá»n Sheet1 + CSV â†’ Publish â†’ copy URL vÃ o Ä‘Ã¢y
+# Tạo Google Sheet → cột A = tên người donate
+# File → Share → Publish to web → chọn Sheet1 + CSV → Publish → copy URL vào đây
 DONORS_SHEET_URL = "https://docs.google.com/spreadsheets/d/1zdKjf5LgZYfctJC9BbvPv7U0E31p7HIGK4wlYF4gM_I/export?format=csv"
 
 def load_donors():
@@ -160,7 +160,7 @@ def load_donors():
             names = []
             for line in csv_text.strip().split('\n'):
                 name = line.strip().strip('"').strip()
-                if name and name.lower() != 'name' and name.lower() != 'tÃªn':
+                if name and name.lower() != 'name' and name.lower() != 'tên':
                     names.append(name)
             if names:
                 # Save to local file as cache
@@ -259,7 +259,7 @@ def normalize_global_stats(stats):
     except:
         return None
 
-PLATFORMS = "YouTube â€¢ TikTok â€¢ Douyin â€¢ Facebook â€¢ Instagram â€¢ Twitter/X â€¢ Reddit â€¢ Vimeo â€¢ Dailymotion â€¢ Bilibili â€¢ Twitch â€¢ SoundCloud â€¢ 1000+ sites"
+PLATFORMS = "YouTube • TikTok • Douyin • Facebook • Instagram • Twitter/X • Reddit • Vimeo • Dailymotion • Bilibili • Twitch • SoundCloud • 1000+ sites"
 
 def load_history():
     try:
@@ -273,25 +273,25 @@ def save_history(data):
         with open(HISTORY_FILE, "w", encoding="utf-8") as f: json.dump(data[-500:], f, ensure_ascii=False, indent=2)
     except: pass
 
-# Format khi cÃ³ ffmpeg: táº£i riÃªng video+audio rá»“i merge â†’ cháº¥t lÆ°á»£ng cao nháº¥t
+# Format khi có ffmpeg: tải riêng video+audio rồi merge → chất lượng cao nhất
 _FMT_FFMPEG = {
-    "Tá»‘t Nháº¥t (Best)": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best",
+    "Tốt Nhất (Best)": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best",
     "4K (2160p)":       "bestvideo[height<=2160][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=2160]+bestaudio/best",
     "2K (1440p)":       "bestvideo[height<=1440][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1440]+bestaudio/best",
     "1080p":            "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best",
     "720p":             "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best",
     "480p":             "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=480]+bestaudio/best",
-    "Chá»‰ Láº¥y Nháº¡c (MP3)": "bestaudio/best",
+    "Chỉ Lấy Nhạc (MP3)": "bestaudio/best",
 }
-# Format khi KHÃ”NG cÃ³ ffmpeg: chá»‰ dÃ¹ng file Ä‘Ã£ pre-merged (mp4 gá»™p sáºµn)
+# Format khi KHÔNG có ffmpeg: chỉ dùng file đã pre-merged (mp4 gộp sẵn)
 _FMT_NOFFMPEG = {
-    "Tá»‘t Nháº¥t (Best)": "best[ext=mp4]/best[ext=webm]/best",
+    "Tốt Nhất (Best)": "best[ext=mp4]/best[ext=webm]/best",
     "4K (2160p)":       "best[height<=2160][ext=mp4]/best[height<=2160]",
     "2K (1440p)":       "best[height<=1440][ext=mp4]/best[height<=1440]",
     "1080p":            "best[height<=1080][ext=mp4]/best[height<=1080]",
     "720p":             "best[height<=720][ext=mp4]/best[height<=720]",
     "480p":             "best[height<=480][ext=mp4]/best[height<=480]",
-    "Chá»‰ Láº¥y Nháº¡c (MP3)": "bestaudio/best",
+    "Chỉ Lấy Nhạc (MP3)": "bestaudio/best",
 }
 FORMAT_MAP = _FMT_FFMPEG if HAS_FFMPEG else _FMT_NOFFMPEG
 
@@ -302,7 +302,7 @@ def clean_filename(raw, fallback_id="x"):
     return " ".join(c.split()).strip() or f"video_{fallback_id}"
 
 URL_RE = re.compile(r'https?://[^\s<>"\']+', re.I)
-TRAILING_URL_CHARS = '.,;:)\\]}>\'",ã€‚;:)ã€‘ã€‹ã€â€¦'
+TRAILING_URL_CHARS = '.,;:)\\]}>\'",。;:)】》、…'
 
 PLATFORM_HINTS = [
     (('douyin.com', 'iesdouyin.com'), 'Douyin'),
@@ -338,7 +338,7 @@ def extract_urls(text):
     seen = set()
     for match in URL_RE.findall(text or ''):
         url = match.strip().replace('&amp;', '&')
-        for sep in (',', 'ã€‚', ';', 'ã€', ')', 'ã€‘', 'ã€‹', 'â€¦'):
+        for sep in (',', '。', ';', '、', ')', '】', '》', '…'):
             url = url.split(sep, 1)[0]
         url = url.rstrip(TRAILING_URL_CHARS)
         url = normalize_url(url)
@@ -785,7 +785,7 @@ def instagram_cookie_files():
     return files
 
 def download_attempts_for(url, allow_browser_cookies=True):
-    attempts = [('khÃ´ng cookie', {})]
+    attempts = [('không cookie', {})]
     if is_douyin_url(url):
         for spec in douyin_cookie_specs():
             label = f"cookie {spec[0]}" + (f" {spec[1]}" if len(spec) > 1 else "")
@@ -825,7 +825,7 @@ class VideoDownloaderApp(ctk.CTk):
     FONT = "Helvetica Neue"
     def __init__(self):
         super().__init__()
-        self.title("âš¡ Pro Video Downloader â€” by HoÃ ng Äá»©c")
+        self.title("⚡ Pro Video Downloader — by Hoàng Đức")
         self.geometry("540x880")
         self.resizable(False, False)
         # Set window icon for titlebar + taskbar
@@ -871,7 +871,7 @@ class VideoDownloaderApp(ctk.CTk):
         self.logo_canvas.pack(side="left", padx=(14, 8), pady=6)
         self.logo_canvas.create_oval(2, 2, 38, 38, outline="#00b894", width=2)
         self.logo_canvas.create_oval(6, 6, 34, 34, outline="#55efc4", width=1)
-        self.logo_canvas.create_text(20, 20, text="âš¡", fill="#f1c40f", font=(self.FONT, 22, "bold"))
+        self.logo_canvas.create_text(20, 20, text="⚡", fill="#f1c40f", font=(self.FONT, 22, "bold"))
         
         title_subframe = ctk.CTkFrame(header_frame, fg_color="transparent")
         title_subframe.pack(side="left", pady=6)
@@ -879,7 +879,7 @@ class VideoDownloaderApp(ctk.CTk):
         ctk.CTkLabel(title_subframe, text="PRO VIDEO DOWNLOADER", 
                      font=ctk.CTkFont(family=self.FONT, size=16, weight="bold"),
                      text_color="#00b894").pack(anchor="w")
-        ctk.CTkLabel(title_subframe, text="ULTIMATE TURBO v1.9.13", 
+        ctk.CTkLabel(title_subframe, text="ULTIMATE TURBO v1.9.14", 
                      font=ctk.CTkFont(family=self.FONT, size=9),
                      text_color="#55efc4").pack(anchor="w")
 
@@ -887,7 +887,7 @@ class VideoDownloaderApp(ctk.CTk):
         self.marquee_canvas = tk.Canvas(self, bg="#1a1a2e", highlightthickness=0, height=22)
         self.marquee_canvas.grid(row=1, column=0, sticky="ew", padx=0, pady=0)
         self._marquee_x = 540
-        self._marquee_str = "âœ¨ Cáº£m Æ¡n báº¡n Ä‘Ã£ sá»­ dá»¥ng app cá»§a Äá»©c!  â¤ï¸  HÃ£y theo dÃµi Ä‘á»ƒ nháº­n thÃªm cÃ´ng cá»¥ má»›i nha!  ðŸš€  facebook.com/ducserving     â€¢     "
+        self._marquee_str = "✨ Cảm ơn bạn đã sử dụng app của Đức!  ❤️  Hãy theo dõi để nhận thêm công cụ mới nha!  🚀  facebook.com/ducserving     •     "
         self._animate_marquee()
 
         self.tabview = ctk.CTkTabview(self, corner_radius=20, segmented_button_fg_color="#1a1a2e", 
@@ -895,57 +895,57 @@ class VideoDownloaderApp(ctk.CTk):
                                      segmented_button_selected_hover_color="#00a381",
                                      segmented_button_unselected_color="#2c3e50")
         self.tabview.grid(row=2, column=0, padx=16, pady=(8, 8), sticky="nsew")
-        self.tabview.add("â–¶ Táº£i Video")
-        self.tabview.add("â¬ HÃ ng Loáº¡t")
-        self.tabview.add("ðŸ“¡ QuÃ©t KÃªnh")
-        self.tabview.add("ðŸ–¼ Thumbnail")
-        self.tabview.add("ðŸ•“ Lá»‹ch Sá»­")
+        self.tabview.add("▶ Tải Video")
+        self.tabview.add("⏬ Hàng Loạt")
+        self.tabview.add("📡 Quét Kênh")
+        self.tabview.add("🖼 Thumbnail")
+        self.tabview.add("🕓 Lịch Sử")
         self.tabview._segmented_button.configure(
             font=ctk.CTkFont(family=self.FONT, size=12, weight="bold"))
 
         # === TAB 1: SINGLE ===
-        t1 = self.tabview.tab("â–¶ Táº£i Video")
+        t1 = self.tabview.tab("▶ Tải Video")
         t1.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(t1, text=f"Há»— trá»£: {PLATFORMS}", font=ctk.CTkFont(family=self.FONT, size=10),
+        ctk.CTkLabel(t1, text=f"Hỗ trợ: {PLATFORMS}", font=ctk.CTkFont(family=self.FONT, size=10),
             text_color="#666", wraplength=460).pack(pady=(12, 4))
         
         uf = ctk.CTkFrame(t1, fg_color="transparent"); uf.pack(pady=(10, 10), fill="x", padx=20)
-        self.single_url = ctk.CTkEntry(uf, placeholder_text="DÃ¡n link video táº¡i Ä‘Ã¢y...", height=50,
+        self.single_url = ctk.CTkEntry(uf, placeholder_text="Dán link video tại đây...", height=50,
             font=ctk.CTkFont(family=self.FONT, size=14), corner_radius=10)
         self.single_url.pack(side="left", fill="x", expand=True, padx=(0, 10))
-        ctk.CTkButton(uf, text="ðŸ“‹", width=50, height=50, command=lambda: self._paste_to(self.single_url),
+        ctk.CTkButton(uf, text="📋", width=50, height=50, command=lambda: self._paste_to(self.single_url),
             font=ctk.CTkFont(size=20), fg_color="#444", hover_color="#555", corner_radius=10).pack(side="right")
         
         qf = ctk.CTkFrame(t1, fg_color="transparent"); qf.pack(pady=(5, 15))
-        ctk.CTkLabel(qf, text="Cháº¥t lÆ°á»£ng:", font=ctk.CTkFont(family=self.FONT, size=13)).pack(side="left", padx=(0, 10))
+        ctk.CTkLabel(qf, text="Chất lượng:", font=ctk.CTkFont(family=self.FONT, size=13)).pack(side="left", padx=(0, 10))
         self.q_menu = ctk.CTkOptionMenu(qf, width=220, height=36, values=list(FORMAT_MAP.keys()), corner_radius=8, fg_color="#2c3e50")
         self.q_menu.pack(side="left")
         
-        self.btn_single = ctk.CTkButton(t1, text="âš¡  Báº®T Äáº¦U Táº¢I NGAY", command=self.on_single, width=280, height=54,
+        self.btn_single = ctk.CTkButton(t1, text="⚡  BẮT ĐẦU TẢI NGAY", command=self.on_single, width=280, height=54,
             font=ctk.CTkFont(family=self.FONT, size=16, weight="bold"), fg_color="#00b894", hover_color="#00a381", corner_radius=12)
         self.btn_single.pack(pady=(10, 10))
 
         # === TAB 2: BULK ===
-        t2 = self.tabview.tab("â¬ HÃ ng Loáº¡t")
+        t2 = self.tabview.tab("⏬ Hàng Loạt")
         t2.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(t2, text="DÃ¡n danh sÃ¡ch link (má»—i dÃ²ng 1 link)",
+        ctk.CTkLabel(t2, text="Dán danh sách link (mỗi dòng 1 link)",
             font=ctk.CTkFont(family=self.FONT, size=14, weight="bold")).pack(pady=(10, 6))
         self.bulk_text = ctk.CTkTextbox(t2, width=480, height=110,
             font=ctk.CTkFont(family=self.FONT, size=12), corner_radius=10, border_width=1, border_color="#34495e")
         self.bulk_text.pack(pady=(0, 8), padx=20)
         self.q_bulk = ctk.CTkOptionMenu(t2, width=220, height=36, values=list(FORMAT_MAP.keys()), corner_radius=8, fg_color="#2c3e50")
         self.q_bulk.pack(pady=(0, 8))
-        self.btn_bulk = ctk.CTkButton(t2, text="âš¡  Báº®T Äáº¦U Táº¢I NGAY", command=self.on_bulk, width=320, height=52,
+        self.btn_bulk = ctk.CTkButton(t2, text="⚡  BẮT ĐẦU TẢI NGAY", command=self.on_bulk, width=320, height=52,
             font=ctk.CTkFont(family=self.FONT, size=16, weight="bold"), fg_color="#00b894", hover_color="#00a381", corner_radius=12)
         self.btn_bulk.pack(pady=(4, 8))
 
         # === TAB 3: CHANNEL SCAN ===
-        t3 = self.tabview.tab("ðŸ“¡ QuÃ©t KÃªnh")
+        t3 = self.tabview.tab("📡 Quét Kênh")
         t3.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(t3, text="Há»— trá»£: QuÃ©t Video tá»« KÃªnh/Playlist", font=ctk.CTkFont(family=self.FONT, size=10),
+        ctk.CTkLabel(t3, text="Hỗ trợ: Quét Video từ Kênh/Playlist", font=ctk.CTkFont(family=self.FONT, size=10),
             text_color="#666", wraplength=460).pack(pady=(12, 10))
         
-        self.chan_url = ctk.CTkEntry(t3, placeholder_text="DÃ¡n URL kÃªnh/playlist YouTube, TikTok, Douyin...",
+        self.chan_url = ctk.CTkEntry(t3, placeholder_text="Dán URL kênh/playlist YouTube, TikTok, Douyin...",
             width=480, height=50, font=ctk.CTkFont(family=self.FONT, size=14), corner_radius=10)
         self.chan_url.pack(pady=(0, 15), padx=20)
         
@@ -953,14 +953,14 @@ class VideoDownloaderApp(ctk.CTk):
         self.q_chan.pack(pady=(0, 15))
         
         cf = ctk.CTkFrame(t3, fg_color="transparent"); cf.pack(pady=(0, 15))
-        ctk.CTkLabel(cf, text="Sá»‘ lÆ°á»£ng:", font=ctk.CTkFont(family=self.FONT, size=13)).pack(side="left", padx=(0, 8))
-        self.chan_limit = ctk.CTkOptionMenu(cf, width=140, height=32, values=["Táº¥t cáº£", "10 video", "20 video", "50 video", "100 video"], corner_radius=8)
+        ctk.CTkLabel(cf, text="Số lượng:", font=ctk.CTkFont(family=self.FONT, size=13)).pack(side="left", padx=(0, 8))
+        self.chan_limit = ctk.CTkOptionMenu(cf, width=140, height=32, values=["Tất cả", "10 video", "20 video", "50 video", "100 video"], corner_radius=8)
         self.chan_limit.pack(side="left")
         bf = ctk.CTkFrame(t3, fg_color="transparent"); bf.pack(pady=(0, 10))
-        self.btn_scan = ctk.CTkButton(bf, text="ðŸ” QUÃ‰T KÃŠNH", command=self.on_scan, width=160, height=46,
+        self.btn_scan = ctk.CTkButton(bf, text="🔍 QUÉT KÊNH", command=self.on_scan, width=160, height=46,
             font=ctk.CTkFont(family=self.FONT, size=13, weight="bold"), fg_color="#6c5ce7", hover_color="#5a4bd1", corner_radius=10)
         self.btn_scan.pack(side="left", padx=8)
-        self.btn_chan_dl = ctk.CTkButton(bf, text="â¬ Táº¢I Táº¤T Cáº¢", command=self.on_chan_download, width=160, height=46,
+        self.btn_chan_dl = ctk.CTkButton(bf, text="⏬ TẢI TẤT CẢ", command=self.on_chan_download, width=160, height=46,
             font=ctk.CTkFont(family=self.FONT, size=13, weight="bold"), fg_color="#00b894", hover_color="#00a381", state="disabled", corner_radius=10)
         self.btn_chan_dl.pack(side="left", padx=8)
         self.chan_info = ctk.CTkLabel(t3, text="", font=ctk.CTkFont(family=self.FONT, size=11), text_color="#8cf", wraplength=460)
@@ -971,16 +971,16 @@ class VideoDownloaderApp(ctk.CTk):
         self._chan_videos = []
 
         # === TAB 4: THUMBNAIL ===
-        t4 = self.tabview.tab("ðŸ–¼ Thumbnail")
+        t4 = self.tabview.tab("🖼 Thumbnail")
         t4.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(t4, text="Há»— trá»£: Táº£i áº£nh bÃ¬a cháº¥t lÆ°á»£ng cao", font=ctk.CTkFont(family=self.FONT, size=10),
+        ctk.CTkLabel(t4, text="Hỗ trợ: Tải ảnh bìa chất lượng cao", font=ctk.CTkFont(family=self.FONT, size=10),
             text_color="#666", wraplength=460).pack(pady=(12, 10))
             
-        self.thumb_url = ctk.CTkEntry(t4, placeholder_text="DÃ¡n link video muá»‘n láº¥y áº£nh...",
+        self.thumb_url = ctk.CTkEntry(t4, placeholder_text="Dán link video muốn lấy ảnh...",
             width=480, height=50, font=ctk.CTkFont(family=self.FONT, size=14), corner_radius=10)
         self.thumb_url.pack(pady=(0, 15), padx=20)
         
-        self.btn_thumb = ctk.CTkButton(t4, text="ðŸ–¼  Táº¢I THUMBNAIL Láºº", command=self.on_thumb, width=260, height=50,
+        self.btn_thumb = ctk.CTkButton(t4, text="🖼  TẢI THUMBNAIL LẺ", command=self.on_thumb, width=260, height=50,
             font=ctk.CTkFont(family=self.FONT, size=15, weight="bold"), fg_color="#6c5ce7", hover_color="#5a4bd1", corner_radius=10)
         self.btn_thumb.pack(pady=(0, 15))
         
@@ -992,19 +992,19 @@ class VideoDownloaderApp(ctk.CTk):
             font=ctk.CTkFont(family=self.FONT, size=12), corner_radius=10, border_width=1, border_color="#34495e")
         self.thumb_bulk.pack(pady=(0, 15), padx=20)
         
-        self.btn_thumb_bulk = ctk.CTkButton(t4, text="ðŸ–¼  Táº¢I HÃ€NG LOáº T THUMBNAIL", command=self.on_thumb_bulk,
+        self.btn_thumb_bulk = ctk.CTkButton(t4, text="🖼  TẢI HÀNG LOẠT THUMBNAIL", command=self.on_thumb_bulk,
             width=260, height=46, font=ctk.CTkFont(family=self.FONT, size=13, weight="bold"),
             fg_color="#6c5ce7", hover_color="#5a4bd1", corner_radius=10)
         self.btn_thumb_bulk.pack(pady=(0, 10))
 
         # === TAB 5: HISTORY ===
-        t5 = self.tabview.tab("ðŸ•“ Lá»‹ch Sá»­")
+        t5 = self.tabview.tab("🕓 Lịch Sử")
         t5.grid_columnconfigure(0, weight=1)
         hh = ctk.CTkFrame(t5, fg_color="transparent"); hh.pack(fill="x", pady=(12, 8), padx=12)
-        self.hist_count = ctk.CTkLabel(hh, text=f"ðŸ“Š ÄÃ£ táº£i: {len(self.history)} video",
+        self.hist_count = ctk.CTkLabel(hh, text=f"📊 Đã tải: {len(self.history)} video",
             font=ctk.CTkFont(family=self.FONT, size=14, weight="bold"))
         self.hist_count.pack(side="left")
-        ctk.CTkButton(hh, text="ðŸ—‘ XÃ³a", width=76, height=32, fg_color="#e74c3c", hover_color="#c0392b",
+        ctk.CTkButton(hh, text="🗑 Xóa", width=76, height=32, fg_color="#e74c3c", hover_color="#c0392b",
             font=ctk.CTkFont(family=self.FONT, size=12), command=self.clear_history).pack(side="right")
         self.hist_text = ctk.CTkTextbox(t5, width=480, height=310, state="disabled",
             font=ctk.CTkFont(family=self.FONT, size=12))
@@ -1017,8 +1017,8 @@ class VideoDownloaderApp(ctk.CTk):
         chart_frame.grid_propagate(False)
         chart_frame.grid_columnconfigure(0, weight=1)
         
-        # ThÃªm Label tá»•ng lÆ°á»£t sá»­ dá»¥ng (Ná»•i báº­t)
-        self.total_lbl = ctk.CTkLabel(chart_frame, text=f"ðŸ“Š {get_usage_total_floor():,} LÆ°á»£t sá»­ dá»¥ng app cá»§a Äá»©c",
+        # Thêm Label tổng lượt sử dụng (Nổi bật)
+        self.total_lbl = ctk.CTkLabel(chart_frame, text=f"📊 {get_usage_total_floor():,} Lượt sử dụng app của Đức",
             font=ctk.CTkFont(family="Segoe UI Emoji", size=14, weight="bold"), text_color="#00b894")
         self.total_lbl.pack(pady=(6, 0))
 
@@ -1033,19 +1033,19 @@ class VideoDownloaderApp(ctk.CTk):
         sf.grid(row=4, column=0, padx=16, pady=(0, 6), sticky="ew"); sf.grid_columnconfigure(0, weight=1)
         self.pbar = ctk.CTkProgressBar(sf, width=490); self.pbar.set(0)
         self.pbar.grid(row=0, column=0, pady=(6, 2)); self.pbar.grid_remove()
-        self.status = ctk.CTkLabel(sf, text="Sáºµn sÃ ng", font=ctk.CTkFont(family=self.FONT, size=13))
+        self.status = ctk.CTkLabel(sf, text="Sẵn sàng", font=ctk.CTkFont(family=self.FONT, size=13))
         self.status.grid(row=1, column=0, pady=(2, 6))
         fbf = ctk.CTkFrame(sf, fg_color="transparent"); fbf.grid(row=2, column=0, pady=(0, 4))
-        ctk.CTkButton(fbf, text="ðŸ“‚  Má»ž THÆ¯ Má»¤C", command=lambda: os.startfile(self.download_path),
+        ctk.CTkButton(fbf, text="📂  MỞ THƯ MỤC", command=lambda: os.startfile(self.download_path),
             fg_color="#2ecc71", hover_color="#27ae60", width=150, height=38,
             font=ctk.CTkFont(family=self.FONT, size=13, weight="bold")).pack(side="left", padx=(0, 10))
-        ctk.CTkButton(fbf, text="ðŸ“  Äá»”I THÆ¯ Má»¤C", command=self._pick_folder,
+        ctk.CTkButton(fbf, text="📁  ĐỔI THƯ MỤC", command=self._pick_folder,
             fg_color="#636e72", hover_color="#2d3436", width=150, height=38,
             font=ctk.CTkFont(family=self.FONT, size=13, weight="bold")).pack(side="left", padx=(0, 10))
         ctk.CTkButton(fbf, text="IG LOGIN", command=self._import_instagram_cookie,
             fg_color="#e17055", hover_color="#d35400", width=120, height=38,
             font=ctk.CTkFont(family=self.FONT, size=12, weight="bold")).pack(side="left")
-        self.path_label = ctk.CTkLabel(sf, text=f"ðŸ“ {self.download_path}",
+        self.path_label = ctk.CTkLabel(sf, text=f"📍 {self.download_path}",
             font=ctk.CTkFont(family=self.FONT, size=10), text_color="#777", wraplength=490)
         self.path_label.grid(row=3, column=0, pady=(0, 4))
 
@@ -1152,7 +1152,7 @@ class VideoDownloaderApp(ctk.CTk):
         self._show_dialog(title, message, kind=kind, buttons=("OK",))
 
     def _confirm(self, title, message):
-        return self._show_dialog(title, message, kind="warning", buttons=("KhÃ´ng", "CÃ³")) == "CÃ³"
+        return self._show_dialog(title, message, kind="warning", buttons=("Không", "Có")) == "Có"
 
     # ===== AUTO UPDATE CHECKER =====
     @staticmethod
@@ -1254,12 +1254,12 @@ del "%~f0" >nul 2>nul
 
     # ===== FOLDER PICKER =====
     def _pick_folder(self):
-        chosen = filedialog.askdirectory(title="Chá»n thÆ° má»¥c lÆ°u video", initialdir=self.download_path)
+        chosen = filedialog.askdirectory(title="Chọn thư mục lưu video", initialdir=self.download_path)
         if chosen:
             self.download_path = os.path.normpath(chosen)
             if not os.path.exists(self.download_path):
                 os.makedirs(self.download_path)
-            self.path_label.configure(text=f"ðŸ“ {self.download_path}")
+            self.path_label.configure(text=f"📍 {self.download_path}")
             save_config({'download_path': self.download_path})
 
     def _import_instagram_cookie(self):
@@ -1295,31 +1295,31 @@ del "%~f0" >nul 2>nul
     def _refresh_hist(self):
         self.hist_text.configure(state="normal"); self.hist_text.delete("1.0", "end")
         if not self.history:
-            self.hist_text.insert("1.0", "ChÆ°a cÃ³ video nÃ o. HÃ£y táº£i video Ä‘áº§u tiÃªn! ðŸŽ¬")
+            self.hist_text.insert("1.0", "Chưa có video nào. Hãy tải video đầu tiên! 🎬")
         else:
             lines = []
             for i, h in enumerate(reversed(self.history[-100:]), 1):
-                lines.append(f"{i}. {h.get('title','N/A')}\n   ðŸ”— {h.get('url','')[:60]}...\n   ðŸ“… {h.get('time','')}  â€¢  ðŸ“ {h.get('type','video')}")
+                lines.append(f"{i}. {h.get('title','N/A')}\n   🔗 {h.get('url','')[:60]}...\n   📅 {h.get('time','')}  •  📁 {h.get('type','video')}")
             self.hist_text.insert("1.0", "\n\n".join(lines))
         self.hist_text.configure(state="disabled")
-        self.hist_count.configure(text=f"ðŸ“Š ÄÃ£ táº£i: {len(self.history)} video")
+        self.hist_count.configure(text=f"📊 Đã tải: {len(self.history)} video")
 
     def clear_history(self):
-        if self._confirm("XÃ¡c nháº­n", "XÃ³a toÃ n bá»™ lá»‹ch sá»­?"):
+        if self._confirm("Xác nhận", "Xóa toàn bộ lịch sử?"):
             self.history = []; save_history([]); self._refresh_hist()
 
     # ===== CHANNEL SCAN =====
     def on_scan(self):
         urls = extract_urls(self.chan_url.get().strip())
-        if not urls: self._alert("Lá»—i", "Nháº­p URL kÃªnh!", "error"); return
+        if not urls: self._alert("Lỗi", "Nhập URL kênh!", "error"); return
         url = urls[0]
-        self.btn_scan.configure(state="disabled"); self.chan_info.configure(text="ðŸ” Äang quÃ©t kÃªnh...")
+        self.btn_scan.configure(state="disabled"); self.chan_info.configure(text="🔍 Đang quét kênh...")
         self.chan_list.configure(state="normal"); self.chan_list.delete("1.0", "end"); self.chan_list.configure(state="disabled")
         threading.Thread(target=self._scan_worker, args=(url,), daemon=True).start()
 
     def _get_limit(self):
         v = self.chan_limit.get()
-        if v == "Táº¥t cáº£": return None
+        if v == "Tất cả": return None
         return int(v.split()[0])
 
     def _scan_worker(self, url):
@@ -1348,22 +1348,22 @@ del "%~f0" >nul 2>nul
                     if item_url:
                         self._chan_videos.append({'url': item_url, 'title': e.get('title', 'N/A')})
             n = len(self._chan_videos)
-            channel = info.get('channel', '') or info.get('uploader', '') or info.get('title', 'KÃªnh')
+            channel = info.get('channel', '') or info.get('uploader', '') or info.get('title', 'Kênh')
             platform = detect_platform(url, info)
-            self.after(0, lambda: self.chan_info.configure(text=f"âœ… [{platform}] TÃ¬m tháº¥y {n} video trong kÃªnh: {channel}"))
+            self.after(0, lambda: self.chan_info.configure(text=f"✅ [{platform}] Tìm thấy {n} video trong kênh: {channel}"))
             self.after(0, lambda: self.btn_scan.configure(state="normal"))
             self.after(0, lambda: self.btn_chan_dl.configure(state="normal"))
             # Show list
             lines = [f"{i+1}. {v['title']}" for i, v in enumerate(self._chan_videos[:100])]
             txt = "\n".join(lines)
-            if n > 100: txt += f"\n... vÃ  {n-100} video khÃ¡c"
+            if n > 100: txt += f"\n... và {n-100} video khác"
             self.after(0, lambda: (self.chan_list.configure(state="normal"), self.chan_list.delete("1.0","end"), self.chan_list.insert("1.0", txt), self.chan_list.configure(state="disabled")))
         except Exception as e:
-            self.after(0, lambda: self.chan_info.configure(text=f"âŒ Lá»—i: {str(e)[:80]}"))
+            self.after(0, lambda: self.chan_info.configure(text=f"❌ Lỗi: {str(e)[:80]}"))
             self.after(0, lambda: self.btn_scan.configure(state="normal"))
 
     def on_chan_download(self):
-        if not self._chan_videos: self._alert("Lá»—i", "QuÃ©t kÃªnh trÆ°á»›c!", "error"); return
+        if not self._chan_videos: self._alert("Lỗi", "Quét kênh trước!", "error"); return
         urls = [v['url'] for v in self._chan_videos if v['url']]
         q = self.q_chan.get()
         self.btn_chan_dl.configure(state="disabled")
@@ -1372,15 +1372,15 @@ del "%~f0" >nul 2>nul
     # ===== DOWNLOADS =====
     def on_single(self):
         urls = extract_urls(self.single_url.get().strip())
-        if not urls: self._alert("Lá»—i", "Nháº­p link!", "error"); return
+        if not urls: self._alert("Lỗi", "Nhập link!", "error"); return
         self.btn_single.configure(state="disabled")
         threading.Thread(target=self._download_engine, args=([urls[0]], self.q_menu.get()), daemon=True).start()
 
     def on_bulk(self):
         txt = self.bulk_text.get("1.0", "end").strip()
-        if not txt: self._alert("Lá»—i", "DÃ¡n link!", "error"); return
+        if not txt: self._alert("Lỗi", "Dán link!", "error"); return
         urls = extract_urls(txt)
-        if not urls: self._alert("Lá»—i", "KhÃ´ng tÃ¬m tháº¥y link há»£p lá»‡!", "error"); return
+        if not urls: self._alert("Lỗi", "Không tìm thấy link hợp lệ!", "error"); return
         self.btn_bulk.configure(state="disabled")
         threading.Thread(target=self._download_engine, args=(urls, self.q_bulk.get()), daemon=True).start()
 
@@ -1394,7 +1394,7 @@ del "%~f0" >nul 2>nul
                 entry.delete(0, "end")
                 entry.insert(0, value)
                 if urls:
-                    self.status.configure(text=f"ÄÃ£ nháº­n diá»‡n link: {detect_platform(value)}", text_color="#55efc4")
+                    self.status.configure(text=f"Đã nhận diện link: {detect_platform(value)}", text_color="#55efc4")
         except: pass
 
     def _set_entry_url(self, entry, url):
@@ -1420,15 +1420,15 @@ del "%~f0" >nul 2>nul
             selected = self.tabview.get()
         except:
             selected = ""
-        if "HÃ ng" in selected or "Loáº¡t" in selected:
+        if "Hàng" in selected or "Loạt" in selected:
             self._append_bulk_url(self.bulk_text, url)
-        elif "QuÃ©t" in selected or "KÃªnh" in selected:
+        elif "Quét" in selected or "Kênh" in selected:
             self._set_entry_url(self.chan_url, url)
         elif "Thumbnail" in selected:
             self._set_entry_url(self.thumb_url, url)
         else:
             self._set_entry_url(self.single_url, url)
-        self.status.configure(text=f"ÄÃ£ tá»± nháº­n diá»‡n link {detect_platform(url)} tá»« clipboard", text_color="#55efc4")
+        self.status.configure(text=f"Đã tự nhận diện link {detect_platform(url)} từ clipboard", text_color="#55efc4")
 
     def _watch_clipboard(self):
         try:
@@ -1446,14 +1446,14 @@ del "%~f0" >nul 2>nul
     def _download_engine(self, urls, quality, is_channel=False):
         total = len(urls); ok = 0; failures = []
         fmt = FORMAT_MAP.get(quality, "bestvideo+bestaudio/best")
-        is_mp3 = quality == "Chá»‰ Láº¥y Nháº¡c (MP3)"
+        is_mp3 = quality == "Chỉ Lấy Nhạc (MP3)"
         ydl_opts = {
             'format': fmt, 'quiet': True, 'no_warnings': True,
             'progress_hooks': [self._hook], 'noplaylist': True,
-            'concurrent_fragment_downloads': 8, # Tá»‘i Æ°u Ä‘a luá»“ng
+            'concurrent_fragment_downloads': 8, # Tối ưu đa luồng
             'retries': 15,
             'fragment_retries': 15,
-            'http_chunk_size': 10485760, # 10MB chunks Ä‘á»ƒ táº£i mÆ°á»£t hÆ¡n
+            'http_chunk_size': 10485760, # 10MB chunks để tải mượt hơn
             'socket_timeout': 45,
             'noprogress': True,
             'http_headers': {
@@ -1473,7 +1473,7 @@ del "%~f0" >nul 2>nul
         for i, url in enumerate(urls):
             try:
                 self.after(0, lambda idx=i+1, u=url: self.status.configure(
-                    text=f"[{idx}/{total}] Äang táº£i: {u[:50]}...", text_color="white"))
+                    text=f"[{idx}/{total}] Đang tải: {u[:50]}...", text_color="white"))
                 tmp = os.path.join(self.download_path, f"_tmp_{threading.get_ident()}_{i}.%(ext)s")
                 info = None
                 src = None
@@ -1504,7 +1504,7 @@ del "%~f0" >nul 2>nul
                         attempt_opts.update(extra_opts)
                         attempt_opts['outtmpl'] = {'default': tmp}
                         self.after(0, lambda label=attempt_label: self.status.configure(
-                            text=f"[{i+1}/{total}] Äang táº£i ({label})...", text_color="white"))
+                            text=f"[{i+1}/{total}] Đang tải ({label})...", text_color="white"))
                         with yt_dlp.YoutubeDL(attempt_opts) as ydl:
                             info = ydl.extract_info(url, download=True)
                             if info:
@@ -1533,11 +1533,11 @@ del "%~f0" >nul 2>nul
                     if is_douyin_url(url):
                         low_err = (last_err or '').lower()
                         if 'unsupported url' in low_err or '404' in low_err:
-                            last_err = "Link Douyin rÃºt gá»n Ä‘Ã£ háº¿t háº¡n/sai hoáº·c bá»‹ chuyá»ƒn vá» trang chá»§. HÃ£y copy láº¡i link má»›i tá»« Douyin."
+                            last_err = "Link Douyin rút gọn đã hết hạn/sai hoặc bị chuyển về trang chủ. Hãy copy lại link mới từ Douyin."
                         elif 'cookie' in low_err or 'dpapi' in low_err or 'fresh cookies' in low_err:
-                            last_err = "Douyin cháº·n táº£i thÆ°á»ng vÃ  yÃªu cáº§u cookie há»£p lá»‡. HÃ£y thá»­ link public khÃ¡c hoáº·c Ä‘Äƒng nháº­p Douyin rá»“i xuáº¥t cookies."
+                            last_err = "Douyin chặn tải thường và yêu cầu cookie hợp lệ. Hãy thử link public khác hoặc đăng nhập Douyin rồi xuất cookies."
                         else:
-                            last_err = last_err or "Douyin yÃªu cáº§u cookie há»£p lá»‡ hoáº·c link public cÃ²n háº¡n."
+                            last_err = last_err or "Douyin yêu cầu cookie hợp lệ hoặc link public còn hạn."
                     elif is_instagram_url(url):
                         low_err = (last_err or '').lower()
                         if 'empty media response' in low_err or 'login' in low_err or 'cookie' in low_err or 'dpapi' in low_err:
@@ -1545,7 +1545,7 @@ del "%~f0" >nul 2>nul
                         else:
                             last_err = last_err or f"Instagram khong tra ve thong tin video. {instagram_missing_reason()}"
                     if not info:
-                        failures.append((url, last_err or "KhÃ´ng láº¥y Ä‘Æ°á»£c thÃ´ng tin video"))
+                        failures.append((url, last_err or "Không lấy được thông tin video"))
                         continue
 
                 raw = info.get('fulltitle') or info.get('title') or ''
@@ -1566,15 +1566,15 @@ del "%~f0" >nul 2>nul
                     os.rename(src, dst); ok += 1
                     self.history.append({"url": url, "title": clean, "type": "mp3" if is_mp3 else "video", "time": time.strftime("%Y-%m-%d %H:%M")})
                 else:
-                    failures.append((url, "File khÃ´ng tá»“n táº¡i sau khi táº£i"))
+                    failures.append((url, "File không tồn tại sau khi tải"))
             except Exception as e:
                 err_short = str(e).split('\n')[0][:120]
                 failures.append((url, err_short))
                 self.after(0, lambda err=err_short: self.status.configure(
-                    text=f"âŒ {err[:70]}", text_color="#ff7675"))
+                    text=f"❌ {err[:70]}", text_color="#ff7675"))
         # Batch save history once
         save_history(self.history)
-        # Record download visits (gá»­i lÃªn Google Sheet + local)
+        # Record download visits (gửi lên Google Sheet + local)
         if ok > 0:
             for _ in range(ok):
                 record_visit('download')
@@ -1586,20 +1586,20 @@ del "%~f0" >nul 2>nul
         failures = failures or []
         self.btn_single.configure(state="normal"); self.btn_bulk.configure(state="normal"); self.btn_chan_dl.configure(state="normal")
         self.pbar.set(1.0 if ok > 0 else 0)
-        self.status.configure(text=f"âœ… ThÃ nh cÃ´ng {ok}/{total}!" if ok > 0 else f"âŒ Tháº¥t báº¡i {total}/{total}", text_color="white")
+        self.status.configure(text=f"✅ Thành công {ok}/{total}!" if ok > 0 else f"❌ Thất bại {total}/{total}", text_color="white")
         self._refresh_hist()
         if ok > 0 and not failures:
-            self._alert("Káº¿t quáº£", f"âœ… ÄÃ£ táº£i {ok}/{total} {'video tá»« kÃªnh' if is_channel else 'video'}.\nðŸ“ {self.download_path}", "success")
+            self._alert("Kết quả", f"✅ Đã tải {ok}/{total} {'video từ kênh' if is_channel else 'video'}.\n📁 {self.download_path}", "success")
         elif ok > 0 and failures:
-            detail = "\n".join([f"âŒ {u[:60]}\n   â†³ {e[:80]}" for u, e in failures[:8]])
-            if len(failures) > 8: detail += f"\n... vÃ  {len(failures)-8} link khÃ¡c tháº¥t báº¡i"
-            self._alert("Káº¿t quáº£", f"âœ… ThÃ nh cÃ´ng: {ok}/{total}\nâŒ Tháº¥t báº¡i: {len(failures)}\n\n{detail}", "warning")
+            detail = "\n".join([f"❌ {u[:60]}\n   ↳ {e[:80]}" for u, e in failures[:8]])
+            if len(failures) > 8: detail += f"\n... và {len(failures)-8} link khác thất bại"
+            self._alert("Kết quả", f"✅ Thành công: {ok}/{total}\n❌ Thất bại: {len(failures)}\n\n{detail}", "warning")
         elif failures:
-            detail = "\n".join([f"âŒ {u[:60]}\n   â†³ {e[:80]}" for u, e in failures[:6]])
-            if len(failures) > 6: detail += f"\n... vÃ  {len(failures)-6} link khÃ¡c"
-            self._alert("Tháº¥t báº¡i", f"KhÃ´ng táº£i Ä‘Æ°á»£c {total} video.\n\n{detail}\n\nðŸ’¡ Kiá»ƒm tra láº¡i link hoáº·c káº¿t ná»‘i máº¡ng.", "error")
+            detail = "\n".join([f"❌ {u[:60]}\n   ↳ {e[:80]}" for u, e in failures[:6]])
+            if len(failures) > 6: detail += f"\n... và {len(failures)-6} link khác"
+            self._alert("Thất bại", f"Không tải được {total} video.\n\n{detail}\n\n💡 Kiểm tra lại link hoặc kết nối mạng.", "error")
         elif total > 0:
-            self._alert("Tháº¥t báº¡i", "KhÃ´ng táº£i Ä‘Æ°á»£c video.\nðŸ’¡ Kiá»ƒm tra link hoáº·c káº¿t ná»‘i máº¡ng.", "error")
+            self._alert("Thất bại", "Không tải được video.\n💡 Kiểm tra link hoặc kết nối mạng.", "error")
 
     def _hook(self, d):
         if d['status'] == 'downloading':
@@ -1610,29 +1610,29 @@ del "%~f0" >nul 2>nul
                 p = float(d.get('_percent_str', '0%').replace('%', '').strip()) / 100
                 spd = d.get('_speed_str', ''); eta = d.get('_eta_str', '')
                 self.after(0, lambda: self.pbar.set(p))
-                self.after(0, lambda: self.status.configure(text=f"Äang táº£i: {d.get('_percent_str','0%')} â€” {spd} â€” ETA: {eta}"))
+                self.after(0, lambda: self.status.configure(text=f"Đang tải: {d.get('_percent_str','0%')} — {spd} — ETA: {eta}"))
             except: pass
         elif d['status'] == 'finished':
-            self.after(0, lambda: (self.pbar.set(0.95), self.status.configure(text="Äang hoÃ n thiá»‡n...")))
+            self.after(0, lambda: (self.pbar.set(0.95), self.status.configure(text="Đang hoàn thiện...")))
 
     # ===== THUMBNAIL =====
     def on_thumb(self):
         urls = extract_urls(self.thumb_url.get().strip())
-        if not urls: self._alert("Lá»—i", "Nháº­p link!", "error"); return
-        self.btn_thumb.configure(state="disabled"); self.thumb_info.configure(text="â³ Äang táº£i...")
+        if not urls: self._alert("Lỗi", "Nhập link!", "error"); return
+        self.btn_thumb.configure(state="disabled"); self.thumb_info.configure(text="⏳ Đang tải...")
         threading.Thread(target=self._thumb_work, args=([urls[0]],), daemon=True).start()
 
     def on_thumb_bulk(self):
         txt = self.thumb_bulk.get("1.0", "end").strip()
         urls = extract_urls(txt)
-        if not urls: self._alert("Lá»—i", "DÃ¡n link!", "error"); return
+        if not urls: self._alert("Lỗi", "Dán link!", "error"); return
         self.btn_thumb_bulk.configure(state="disabled")
         threading.Thread(target=self._thumb_work, args=(urls,), daemon=True).start()
 
     def _thumb_work(self, urls):
         ok = 0
         failures = []
-        # Reuse single yt-dlp instance for all thumbnails â€” much faster
+        # Reuse single yt-dlp instance for all thumbnails — much faster
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,
@@ -1645,7 +1645,7 @@ del "%~f0" >nul 2>nul
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             for i, url in enumerate(urls):
                 try:
-                    self.after(0, lambda idx=i+1: self.thumb_info.configure(text=f"â³ [{idx}/{len(urls)}]..."))
+                    self.after(0, lambda idx=i+1: self.thumb_info.configure(text=f"⏳ [{idx}/{len(urls)}]..."))
                     info = ydl.extract_info(url, download=False)
                     thumb = info.get('thumbnail')
                     thumbs = info.get('thumbnails') or []
@@ -1666,14 +1666,14 @@ del "%~f0" >nul 2>nul
                         download_binary(thumb, path, referer=url); ok += 1
                         self.history.append({"url": url, "title": title, "type": "thumbnail", "time": time.strftime("%Y-%m-%d %H:%M")})
                     else:
-                        failures.append((url, "KhÃ´ng tÃ¬m tháº¥y thumbnail"))
+                        failures.append((url, "Không tìm thấy thumbnail"))
                 except Exception as e:
                     failures.append((url, str(e).split('\n')[0][:100]))
         if ok > 0:
             self._set_chart_data(self._chart_data, self._chart_total + ok)
             threading.Thread(target=self._refresh_chart_from_api, daemon=True).start()
         save_history(self.history)
-        self.after(0, lambda: self.thumb_info.configure(text=f"âœ… ÄÃ£ táº£i {ok}/{len(urls)} thumbnail" if not failures else f"âš ï¸ Táº£i {ok}/{len(urls)} thumbnail, lá»—i {len(failures)} link"))
+        self.after(0, lambda: self.thumb_info.configure(text=f"✅ Đã tải {ok}/{len(urls)} thumbnail" if not failures else f"⚠️ Tải {ok}/{len(urls)} thumbnail, lỗi {len(failures)} link"))
         self.after(0, lambda: self.btn_thumb.configure(state="normal"))
         self.after(0, lambda: self.btn_thumb_bulk.configure(state="normal"))
         self.after(0, self._refresh_hist)
@@ -1690,11 +1690,11 @@ del "%~f0" >nul 2>nul
         dev_frame = ctk.CTkFrame(foot, fg_color="transparent")
         dev_frame.grid(row=0, column=0, sticky="sw", padx=16)
         
-        dev_lbl = ctk.CTkLabel(dev_frame, text="ðŸ’» Dev by HoÃ ng Äá»©c", font=ctk.CTkFont(family=self.FONT, size=12, weight="bold"), text_color="#3498db", cursor="hand2")
+        dev_lbl = ctk.CTkLabel(dev_frame, text="💻 Dev by Hoàng Đức", font=ctk.CTkFont(family=self.FONT, size=12, weight="bold"), text_color="#3498db", cursor="hand2")
         dev_lbl.pack(anchor="w")
         dev_lbl.bind("<Button-1>", lambda e: webbrowser.open("https://www.facebook.com/ducserving"))
         
-        dev_sub = ctk.CTkLabel(dev_frame, text="Há»— trá»£ & GÃ³p Ã½", font=ctk.CTkFont(family=self.FONT, size=10), text_color="#7f8c8d", cursor="hand2")
+        dev_sub = ctk.CTkLabel(dev_frame, text="Hỗ trợ & Góp ý", font=ctk.CTkFont(family=self.FONT, size=10), text_color="#7f8c8d", cursor="hand2")
         dev_sub.pack(anchor="w")
         dev_sub.bind("<Button-1>", lambda e: webbrowser.open("https://www.facebook.com/ducserving"))
 
@@ -1713,9 +1713,9 @@ del "%~f0" >nul 2>nul
         if self._coffee_img:
             self.coffee_lbl = ctk.CTkLabel(coffee_frame, image=self._coffee_img, text="", fg_color="transparent", cursor="hand2")
         else:
-            self.coffee_lbl = ctk.CTkLabel(coffee_frame, text="â˜•", font=ctk.CTkFont(size=36), text_color="#e67e22", cursor="hand2")
+            self.coffee_lbl = ctk.CTkLabel(coffee_frame, text="☕", font=ctk.CTkFont(size=36), text_color="#e67e22", cursor="hand2")
         self.coffee_lbl.pack()
-        ctk.CTkLabel(coffee_frame, text="Má»i cafe â˜•", font=ctk.CTkFont(family=self.FONT, size=10), text_color="#665544").pack()
+        ctk.CTkLabel(coffee_frame, text="Mời cafe ☕", font=ctk.CTkFont(family=self.FONT, size=10), text_color="#665544").pack()
 
         # QR popup
         self._qr_popup = None
@@ -1741,12 +1741,12 @@ del "%~f0" >nul 2>nul
         p.attributes('-topmost', True)
         p.configure(fg_color="#0d0906")
         # Build content
-        ctk.CTkLabel(p, text="â˜• Má»i Cafe TÃ¡c Giáº£", font=ctk.CTkFont(family=self.FONT, size=16, weight="bold"),
+        ctk.CTkLabel(p, text="☕ Mời Cafe Tác Giả", font=ctk.CTkFont(family=self.FONT, size=16, weight="bold"),
             text_color="#f0c070").pack(pady=(12, 6))
         qf = ctk.CTkFrame(p, fg_color="white", corner_radius=10)
         qf.pack(padx=16, pady=6)
         ctk.CTkLabel(qf, image=self._qr_ctk_img, text="", fg_color="white").pack(padx=10, pady=10)
-        ctk.CTkLabel(p, text="QuÃ©t mÃ£ QR Ä‘á»ƒ chuyá»ƒn khoáº£n â˜•âœ¨",
+        ctk.CTkLabel(p, text="Quét mã QR để chuyển khoản ☕✨",
             font=ctk.CTkFont(family=self.FONT, size=11), text_color="#c0946a").pack(pady=(4, 10))
         # Position above coffee icon
         p.update_idletasks()
@@ -1781,7 +1781,7 @@ del "%~f0" >nul 2>nul
 
     # ===== USER CHART =====
     def _register_and_fetch_count(self):
-        """Record 'open' visit â†’ POST lÃªn Google Sheet â†’ hiá»ƒn thá»‹ tá»•ng toÃ n cáº§u."""
+        """Record 'open' visit → POST lên Google Sheet → hiển thị tổng toàn cầu."""
         # Record this app open (POST to API + local)
         _, api_result = record_visit('open')
         # If API returned data, use it directly
@@ -1815,7 +1815,7 @@ del "%~f0" >nul 2>nul
             self.after(0, self._refresh_chart_from_cache)
 
     def _refresh_chart_from_cache(self):
-        """Fallback: Ä‘á»c local visits khi khÃ´ng cÃ³ máº¡ng."""
+        """Fallback: đọc local visits khi không có mạng."""
         visits = load_visits()
         floor = get_usage_total_floor()
         total = max(floor, BASE_VISITS + len(visits))
@@ -1830,8 +1830,8 @@ del "%~f0" >nul 2>nul
         self._chart_data = daily
         self._chart_total = total
         try:
-            suffix = " â€¢ online" if source == "online" else (" â€¢ offline" if source == "offline" else "")
-            self.total_lbl.configure(text=f"ðŸ“Š {int(total):,} LÆ°á»£t sá»­ dá»¥ng app cá»§a Äá»©c{suffix}")
+            suffix = " • online" if source == "online" else (" • offline" if source == "offline" else "")
+            self.total_lbl.configure(text=f"📊 {int(total):,} Lượt sử dụng app của Đức{suffix}")
         except: pass
         self._chart_anim = 0.0
         self._animate_chart()
@@ -1859,7 +1859,7 @@ del "%~f0" >nul 2>nul
 
         data = self._chart_data
         if not data:
-            c.create_text(w // 2, h // 2, text="Chá» káº¿t ná»‘i...", fill="#555",
+            c.create_text(w // 2, h // 2, text="Chờ kết nối...", fill="#555",
                           font=(self.FONT, 11))
             return
 
